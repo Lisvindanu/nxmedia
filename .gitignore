@@ -1,0 +1,12 @@
+build/
+*.nro
+*.nso
+*.nacp
+*.elf
+*.map
+*.json
+out/
+tests/build/
+tools/__pycache__/
+publicapi-catalog.txt
+.DS_Store

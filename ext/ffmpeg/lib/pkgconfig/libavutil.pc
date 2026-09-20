@@ -1,0 +1,14 @@
+prefix=/Users/lisvindanuu/SwitchDev/nxmedia/ext/ffmpeg
+exec_prefix=${prefix}
+libdir=/Users/lisvindanuu/SwitchDev/nxmedia/ext/ffmpeg/lib
+includedir=/Users/lisvindanuu/SwitchDev/nxmedia/ext/ffmpeg/include
+
+Name: libavutil
+Description: FFmpeg utility library
+Version: 59.39.100
+Requires: 
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lavutil -pthread -lm
+Libs.private: 
+Cflags: -I${includedir}
