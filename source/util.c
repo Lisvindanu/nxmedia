@@ -65,3 +65,49 @@ void set_err(char *err, size_t err_len, const char *fmt, ...) {
 	vsnprintf(err, err_len, fmt, args);
 	va_end(args);
 }
+
+/** How many bytes the sequence starting at this lead byte should be, 0 if it is not a lead. */
+static size_t utf8_sequence_len(unsigned char lead) {
+	if (lead < 0x80) return 1;
+	if ((lead & 0xE0) == 0xC0) return 2;
+	if ((lead & 0xF0) == 0xE0) return 3;
+	if ((lead & 0xF8) == 0xF0) return 4;
+	return 0;
+}
+
+void sanitize_filename(const char *name, char *out, size_t out_len) {
+	size_t written = 0;
+
+	for (const char *c = name; c && *c; ) {
+		unsigned char ch = (unsigned char)*c;
+
+		if (ch < 0x20 || strchr("\\/:*?\"<>|", ch) != NULL) {
+			if (written + 1 >= out_len) break;
+			out[written++] = '_';
+			c++;
+			continue;
+		}
+
+		size_t len = utf8_sequence_len(ch);
+
+		/* A sequence the name ends in the middle of, and a continuation byte with no
+		 * lead in front of it, are both dropped along with everything after: there is
+		 * no character there to keep. */
+		for (size_t i = 1; i < len; i++) {
+			if (((unsigned char)c[i] & 0xC0) != 0x80) {
+				len = 0;
+				break;
+			}
+		}
+		if (len == 0 || written + len >= out_len) break;
+
+		memcpy(out + written, c, len);
+		written += len;
+		c += len;
+	}
+
+	while (written > 0 && (out[written - 1] == '.' || out[written - 1] == ' ')) written--;
+	out[written] = '\0';
+
+	if (written == 0) snprintf(out, out_len, "download");
+}

@@ -10,7 +10,8 @@ LDLIBS  := -lm
 SHARED  := ../source/world.c ../source/util.c
 
 BINDIR  := build
-TESTS   := $(BINDIR)/test_world $(BINDIR)/test_projection $(BINDIR)/test_version
+TESTS   := $(BINDIR)/test_world $(BINDIR)/test_projection $(BINDIR)/test_version \
+           $(BINDIR)/test_sanitize
 
 .PHONY: all clean
 all: $(TESTS)
@@ -23,6 +24,9 @@ $(BINDIR)/test_projection: test_projection.c ../source/projection.c $(SHARED) | 
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
 $(BINDIR)/test_version: test_version.c ../source/util.c | $(BINDIR)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+$(BINDIR)/test_sanitize: test_sanitize.c ../source/util.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
 
 $(BINDIR):
