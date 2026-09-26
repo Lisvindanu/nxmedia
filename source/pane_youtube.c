@@ -295,23 +295,25 @@ static bool on_progress(void *user, int64_t done, int64_t total) {
 	return appletMainLoop();
 }
 
-/* Streams the very file the save button would write, without writing it. The
- * server has to merge it first either way; what differs is that nothing lands on
- * the card. */
+/*
+ * Plays the stream YouTube already serves with its sound inside it, which the
+ * server only has to pass along. Nothing is merged, so the wait does not grow with
+ * the video -- an hour-long recording starts as quickly as a three-minute one,
+ * which is the whole reason long videos are watchable now.
+ *
+ * Quality is 360p. The high-resolution copy is what the save button fetches, and
+ * that one is worth its wait because it is kept.
+ */
 static void watch_selected(void) {
 	const MediaItem *item = current_item();
 	if (!item || refuse_live(item)) return;
 
-	pane.cancelled = false;
+	ui_message(T(STR_PREPARING), item->title, NULL, 0);
 
 	char url[640];
 	char err[160];
-	if (!media_prepare_video(&pane.settings, item, url, sizeof(url), NULL, on_waiting,
-			err, sizeof(err))) {
-		/* Walking away is not a failure, and saying so in the words of whatever
-		 * call happened to unwind would read like one. */
-		snprintf(pane.note, sizeof(pane.note), "%.150s",
-				pane.cancelled ? T(STR_CANCELLED) : err);
+	if (!media_prepare_stream(&pane.settings, item, url, sizeof(url), err, sizeof(err))) {
+		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
 		return;
 	}
 

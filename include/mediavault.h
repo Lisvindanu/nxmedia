@@ -73,6 +73,21 @@ bool media_prepare_audio(const Settings *cfg, const MediaItem *item,
 		char *url_out, size_t url_len, char *err, size_t err_len);
 
 /**
+ * Reports a URL the player can open at once, and makes sure it is ready to answer.
+ *
+ * This is the 360p stream YouTube already serves with the sound inside it, so the
+ * server has nothing to merge and the wait does not grow with the video's length.
+ * It is what makes an hour-long recording watchable at all: merging one costs a
+ * third of its running time, which nobody waits out to press play.
+ *
+ * The first request for a given video still pays for resolving it -- measured
+ * between eight and twenty-five seconds -- which is why it is warmed here rather
+ * than handed to a player whose own read timeout is fifteen.
+ */
+bool media_prepare_stream(const Settings *cfg, const MediaItem *item,
+		char *url_out, size_t url_len, char *err, size_t err_len);
+
+/**
  * Waits for the server to finish merging, then reports a URL the player can open.
  *
  * The same file the download uses: a complete MP4 served with byte ranges, which

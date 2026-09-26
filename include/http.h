@@ -59,6 +59,17 @@ bool http_upload_send(const char *session_uri, const char *path, int64_t offset,
  */
 int http_receive_window_kb(void);
 
+/**
+ * Asks for the first byte of `url` and discards it, purely so the server has done
+ * its work before someone else asks for the rest.
+ *
+ * This exists because the media proxy sends nothing at all until yt-dlp has
+ * finished resolving, which on a cold video outlasts ffmpeg's own read timeout --
+ * so the player gives up before the first byte ever arrives. curl waits it out
+ * here instead, under a timeout this side chooses.
+ */
+bool http_touch(const char *url, int timeout_seconds, char *err, size_t err_len);
+
 /** Percent-encodes a value for use in a query string. Free with http_free_escaped. */
 char *http_escape(const char *value);
 void http_free_escaped(char *escaped);

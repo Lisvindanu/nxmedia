@@ -256,6 +256,22 @@ static bool wait_until_ready(const Settings *cfg, const MediaItem *item,
 	}
 }
 
+/* Generous, because the cost here is the server resolving the video and the
+ * heaviest one measured took twenty-five seconds. Still bounded: a server that
+ * never answers has to stop being waited for. */
+#define WARM_TIMEOUT_SECONDS 60
+
+bool media_prepare_stream(const Settings *cfg, const MediaItem *item,
+		char *url_out, size_t url_len, char *err, size_t err_len) {
+	char url[640];
+	snprintf(url, sizeof(url), "%s/proxy/%s", cfg->mediavault_url, item->id);
+
+	if (!http_touch(url, WARM_TIMEOUT_SECONDS, err, err_len)) return false;
+
+	snprintf(url_out, url_len, "%s", url);
+	return true;
+}
+
 bool media_prepare_video(const Settings *cfg, const MediaItem *item,
 		char *url_out, size_t url_len, void *user, MediaWaiting on_waiting,
 		char *err, size_t err_len) {

@@ -138,3 +138,34 @@ bool http_get(const char *url, const char *bearer, HttpBuffer *out, char *err, s
 bool http_post_form(const char *url, const char *body, HttpBuffer *out, char *err, size_t err_len) {
 	return request_to_buffer(url, NULL, body, out, err, err_len);
 }
+
+/** Throws away whatever arrives; a warm-up wants the server's work, not its bytes. */
+static size_t discard(char *ptr, size_t size, size_t nmemb, void *userdata) {
+	(void)ptr;
+	(void)userdata;
+	return size * nmemb;
+}
+
+bool http_touch(const char *url, int timeout_seconds, char *err, size_t err_len) {
+	CURL *curl = curl_easy_init();
+	if (!curl) {
+		set_err(err, err_len, "curl_easy_init gagal");
+		return false;
+	}
+
+	http_apply_common(curl, url);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discard);
+
+	/* One byte is enough: the cost being paid is the server resolving the media,
+	 * and it has to finish that before it can answer with any byte at all. */
+	curl_easy_setopt(curl, CURLOPT_RANGE, "0-0");
+
+	/* The stall detector would fire long before a slow resolve answers, and that is
+	 * the whole thing being waited out here. */
+	curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 0L);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)timeout_seconds);
+
+	bool ok = http_perform(curl, "menyiapkan", NULL, NULL, err, err_len);
+	curl_easy_cleanup(curl);
+	return ok;
+}
