@@ -139,14 +139,39 @@ bool http_post_form(const char *url, const char *body, HttpBuffer *out, char *er
 	return request_to_buffer(url, NULL, body, out, err, err_len);
 }
 
-/** Throws away whatever arrives; a warm-up wants the server's work, not its bytes. */
-static size_t discard(char *ptr, size_t size, size_t nmemb, void *userdata) {
-	(void)ptr;
-	(void)userdata;
-	return size * nmemb;
+/*
+ * Keeps the first few kilobytes and throws away the rest.
+ *
+ * A warm-up wants the server's work rather than its bytes, so almost nothing is
+ * kept -- but when the answer is a refusal, those first bytes are the explanation,
+ * and discarding them is how a perfectly clear reason became "HTTP 500" on screen.
+ */
+#define TOUCH_KEEP_BYTES 4096
+
+static size_t keep_a_little(char *ptr, size_t size, size_t nmemb, void *userdata) {
+	HttpBuffer *buf = userdata;
+	size_t added = size * nmemb;
+
+	if (buf->len < TOUCH_KEEP_BYTES) {
+		size_t room = TOUCH_KEEP_BYTES - buf->len;
+		size_t take = added < room ? added : room;
+
+		char *grown = realloc(buf->data, buf->len + take + 1);
+		if (grown) {
+			buf->data = grown;
+			memcpy(buf->data + buf->len, ptr, take);
+			buf->len += take;
+			buf->data[buf->len] = '\0';
+		}
+	}
+
+	return added;
 }
 
-bool http_touch(const char *url, int timeout_seconds, char *err, size_t err_len) {
+bool http_touch(const char *url, int timeout_seconds, HttpBuffer *reply,
+		char *err, size_t err_len) {
+	HttpBuffer body = {0};
+
 	CURL *curl = curl_easy_init();
 	if (!curl) {
 		set_err(err, err_len, "curl_easy_init gagal");
@@ -154,7 +179,8 @@ bool http_touch(const char *url, int timeout_seconds, char *err, size_t err_len)
 	}
 
 	http_apply_common(curl, url);
-	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discard);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, keep_a_little);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
 
 	/* One byte is enough: the cost being paid is the server resolving the media,
 	 * and it has to finish that before it can answer with any byte at all. */
@@ -165,7 +191,13 @@ bool http_touch(const char *url, int timeout_seconds, char *err, size_t err_len)
 	curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 0L);
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)timeout_seconds);
 
-	bool ok = http_perform(curl, "menyiapkan", NULL, NULL, err, err_len);
+	bool ok = http_perform(curl, "menyiapkan", &body, NULL, err, err_len);
 	curl_easy_cleanup(curl);
+
+	/* Handed over on failure so the caller can read the reason out of it; a success
+	 * has nothing worth keeping. */
+	if (!ok && reply) *reply = body;
+	else http_buffer_free(&body);
+
 	return ok;
 }
