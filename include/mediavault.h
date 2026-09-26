@@ -60,6 +60,18 @@ bool media_search(const Settings *cfg, const char *text, MediaListing *out,
 typedef bool (*MediaWaiting)(void *user, int seconds_waited);
 
 /**
+ * Asks the server to resolve this video's audio and reports the URL to play.
+ *
+ * The proxy does not send a single byte until yt-dlp has finished with it, which
+ * on a cold video is twelve to twenty seconds -- longer than ffmpeg's own read
+ * timeout, so handing the proxy straight to the player makes it give up half the
+ * time. This asks the small metadata route first, which does the same resolving
+ * for a kilobyte of JSON, and leaves the proxy warm enough to open at once.
+ */
+bool media_prepare_audio(const Settings *cfg, const MediaItem *item,
+		char *url_out, size_t url_len, char *err, size_t err_len);
+
+/**
  * Waits for the server to have the file, then downloads it into dest_dir.
  *
  * The wait is budgeted from the video's duration rather than a fixed number:

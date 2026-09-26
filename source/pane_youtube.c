@@ -115,12 +115,18 @@ static void play_selected(void) {
 	if (pane.selected >= pane.list.count) return;
 	const MediaItem *item = &pane.list.items[pane.selected];
 
-	/* The proxy hands back a complete m4a with byte ranges, so ffmpeg opens it the
-	 * same way it opens a file and there is nothing to wait for. */
-	char url[640];
-	snprintf(url, sizeof(url), "%s/audio/%s", pane.settings.mediavault_url, item->id);
+	/* Resolved first, then played. The proxy stays silent until yt-dlp has finished
+	 * with a cold video, which outlasts ffmpeg's own read timeout -- so asking the
+	 * player to wait it out is how this ended up connecting forever. */
+	ui_message(T(STR_PREPARING), item->title, NULL, 0);
 
+	char url[640];
 	char err[160];
+	if (!media_prepare_audio(&pane.settings, item, url, sizeof(url), err, sizeof(err))) {
+		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		return;
+	}
+
 	if (!player_play(url, NULL, err, sizeof(err))) {
 		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
 		return;

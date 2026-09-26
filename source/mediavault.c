@@ -145,6 +145,39 @@ bool media_search(const Settings *cfg, const char *text, MediaListing *out,
 	return fetch_listing(url, out, err, err_len);
 }
 
+bool media_prepare_audio(const Settings *cfg, const MediaItem *item,
+		char *url_out, size_t url_len, char *err, size_t err_len) {
+	char url[640];
+	snprintf(url, sizeof(url), "%s/audio-url/%s", cfg->mediavault_url, item->id);
+
+	HttpBuffer body = {0};
+	if (!http_get(url, NULL, &body, err, err_len)) return false;
+
+	/* Only the success flag is read. The body also carries a direct googlevideo
+	 * URL, which is deliberately ignored: those are tied to the address that asked
+	 * for them, and the console is not that address. */
+	json_object *root = json_tokener_parse(body.data ? body.data : "");
+	http_buffer_free(&body);
+
+	if (!root) {
+		set_err(err, err_len, "jawaban audio tidak dikenali");
+		return false;
+	}
+
+	json_object *ok = NULL;
+	bool usable = json_object_object_get_ex(root, "success", &ok) &&
+			json_object_get_boolean(ok);
+	json_object_put(root);
+
+	if (!usable) {
+		set_err(err, err_len, "server tidak bisa menyiapkan audionya");
+		return false;
+	}
+
+	snprintf(url_out, url_len, "%s/audio/%s", cfg->mediavault_url, item->id);
+	return true;
+}
+
 typedef struct {
 	char url[512];
 	char filename[256];
