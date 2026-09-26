@@ -10,6 +10,11 @@
  * the settings file, which is how a different server is used without a rebuild. */
 #define DEFAULT_MEDIAVAULT_URL "https://mediavault.project-n.site/api/public"
 
+/* Searching here instead of on the server is worth roughly twelve times the speed
+ * -- 0.6 seconds against 7.4 -- because it answers from a JavaScript runtime rather
+ * than starting a Python process for every request. */
+#define DEFAULT_MEDIAVAULT_EDGE_URL "https://mediavault-browse.lisvindanu015.workers.dev"
+
 /* A settings file is a few hundred bytes. Anything vastly larger is not one, and
  * reading it whole into memory would be the wrong response either way. */
 #define SETTINGS_MAX_BYTES (64 * 1024)
@@ -54,6 +59,8 @@ static void copy_string_field(json_object *root, const char *key, char *out, siz
 
 void settings_load(Settings *out) {
 	snprintf(out->mediavault_url, sizeof(out->mediavault_url), "%s", DEFAULT_MEDIAVAULT_URL);
+	snprintf(out->mediavault_edge_url, sizeof(out->mediavault_edge_url), "%s",
+			DEFAULT_MEDIAVAULT_EDGE_URL);
 
 	char *text = read_file(SETTINGS_PATH);
 	if (!text) return;
@@ -68,6 +75,8 @@ void settings_load(Settings *out) {
 	if (json_object_is_type(root, json_type_object)) {
 		copy_string_field(root, "mediavault_url", out->mediavault_url,
 				sizeof(out->mediavault_url));
+		copy_string_field(root, "mediavault_edge_url", out->mediavault_edge_url,
+				sizeof(out->mediavault_edge_url));
 	}
 
 	json_object_put(root);

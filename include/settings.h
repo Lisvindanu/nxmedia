@@ -17,6 +17,15 @@
 typedef struct {
 	/** Base of the MediaVault public API, without a trailing slash. */
 	char mediavault_url[SETTINGS_URL_MAX];
+	/**
+	 * Base of the edge search service, without a trailing slash.
+	 *
+	 * Only searching and single-video lookups may live out here. Playing and
+	 * downloading may not: a googlevideo URL is tied to the address that extracted
+	 * it and answers 403 from anywhere else, so whichever machine resolves a stream
+	 * has to be the one that serves its bytes.
+	 */
+	char mediavault_edge_url[SETTINGS_URL_MAX];
 } Settings;
 
 /** Fills out with the file's values, or with defaults where it is silent. */

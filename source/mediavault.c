@@ -51,11 +51,31 @@ static int64_t int_field(json_object *obj, const char *key) {
 /** Copies one search result out of the array. False means it was unusable. */
 static bool read_item(json_object *node, MediaItem *out) {
 	const char *id = string_field(node, "videoId");
-	const char *filename = string_field(node, "filename");
-	if (!id || !filename) return false;
+	if (!id) return false;
 
 	const char *title = string_field(node, "title");
 	const char *author = string_field(node, "author");
+
+	/*
+	 * The edge search service does not send a file name, only the server does, so one
+	 * is derived here rather than throwing the result away -- rejecting these would
+	 * turn every search into "no results" while looking like a working answer.
+	 *
+	 * It is a fallback for display and for the shelves. A save re-reads the name from
+	 * the server once the file exists, because only the machine that produced it
+	 * knows what extension it ended up with.
+	 */
+	char derived[256];
+	const char *filename = string_field(node, "filename");
+
+	if (!filename) {
+		const char *ext = string_field(node, "ext");
+		char stem[192];
+
+		sanitize_filename(title ? title : id, stem, sizeof(stem));
+		snprintf(derived, sizeof(derived), "%s.%s", stem, ext ? ext : "mp4");
+		filename = derived;
+	}
 	const char *author_id = string_field(node, "authorId");
 
 	*out = (MediaItem){
@@ -180,7 +200,28 @@ bool media_search(const Settings *cfg, const char *text, MediaListing *out,
 		return false;
 	}
 
+	/*
+	 * The edge answers from a JavaScript runtime, the server starts a Python process
+	 * for every request; measured at 0.6 seconds against 7.4. Searching is the most
+	 * frequent thing this pane does, so it is worth asking the fast one first.
+	 *
+	 * Only searching may move out there. A stream URL is tied to the address that
+	 * extracted it and answers 403 from anywhere else, so playing and downloading
+	 * stay with the machine that resolves them.
+	 */
 	char url[768];
+	snprintf(url, sizeof(url), "%s/search?q=%s", cfg->mediavault_edge_url, escaped);
+
+	if (fetch_listing(url, out, err, err_len)) {
+		http_free_escaped(escaped);
+		return true;
+	}
+
+	/* The edge is one more thing that can be down, and the server still answers the
+	 * same question. Falling back costs a slow search; not falling back costs the
+	 * feature. */
+	printf("[media] edge gagal (%s), coba server\n", err);
+
 	snprintf(url, sizeof(url), "%s/search?q=%s", cfg->mediavault_url, escaped);
 	http_free_escaped(escaped);
 
