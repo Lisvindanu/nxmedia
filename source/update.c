@@ -20,6 +20,7 @@
 #define PATH_MAX_LEN 512
 #define NRO_MAGIC_OFFSET 0x10
 #define NRO_HEADER_LEN 0x20
+#define COPY_CHUNK_BYTES (64 * 1024)
 
 static char SELF_PATH[PATH_MAX_LEN] = FALLBACK_SELF_PATH;
 
@@ -125,6 +126,44 @@ static bool looks_like_nro(const char *path, char *err, size_t err_len) {
 	return true;
 }
 
+/*
+ * Writes `src` over `dst`, creating it if needed. This exists because Horizon
+ * refuses to rename a file that some other handle still has open, and depending on
+ * how the app was launched the running NRO is one of those. Writing over the top is
+ * allowed where the rename is not: the loader reads the whole NRO into memory before
+ * the app starts, so the bytes being rewritten are not the ones being executed.
+ *
+ * Unlike a rename this is not atomic, which is why it is only ever the fallback.
+ */
+static bool copy_over(const char *src, const char *dst) {
+	FILE *in = fopen(src, "rb");
+	if (!in) return false;
+
+	FILE *out = fopen(dst, "wb");
+	if (!out) {
+		fclose(in);
+		return false;
+	}
+
+	char chunk[COPY_CHUNK_BYTES];
+	bool ok = true;
+	size_t got;
+
+	while ((got = fread(chunk, 1, sizeof(chunk), in)) > 0) {
+		if (fwrite(chunk, 1, got, out) != got) {
+			ok = false;
+			break;
+		}
+	}
+	if (ferror(in)) ok = false;
+
+	/* The close is where a full card finally reports itself, so a failure there
+	 * matters as much as one from the writes above. */
+	if (fclose(out) != 0) ok = false;
+	fclose(in);
+	return ok;
+}
+
 bool update_apply(const UpdateInfo *info, HttpProgress on_progress, void *user,
 		char *err, size_t err_len) {
 	if (!info->available || !info->asset_url[0]) {
@@ -158,33 +197,78 @@ bool update_apply(const UpdateInfo *info, HttpProgress on_progress, void *user,
 		return false;
 	}
 
-	/* Move the running build aside rather than deleting it, so a failed swap can be
-	 * undone and the console is never left without an app to launch. */
 	/* romfsMountSelf holds the running NRO open for the whole session, and Horizon
-	 * refuses to rename a file that is open. The map is fully parsed into memory at
-	 * startup, so the mount is only needed again if the swap does not happen. */
+	 * refuses to rename a file that is open. Unmounting first is what gives the
+	 * rename below a chance; the mount is restored either way once the swap is
+	 * settled, so the rest of the session still has its data. */
 	romfsExit();
 
 	remove(backup);
-	if (rename(SELF_PATH, backup) != 0) {
-		romfsInit();
-		remove(staged);
-		set_err(err, err_len, "Could not swap the app: %s (fs 0x%x)", strerror(errno),
-				(unsigned)fsdevGetLastResult());
-		return false;
+
+	/*
+	 * The running build is moved aside rather than deleted, so a swap that fails
+	 * halfway still leaves an app on the card to launch.
+	 *
+	 * Renaming is tried first because it is atomic: there is no instant where the
+	 * app on the card is half-written. Only when Horizon refuses it -- which happens
+	 * when something still holds the NRO open -- does this fall back to copying,
+	 * which works in that case but has to be unwound by hand if it breaks.
+	 */
+	int swap_errno = 0;
+	unsigned swap_res = 0;
+	bool swapped = false;
+
+	if (rename(SELF_PATH, backup) == 0) {
+		if (rename(staged, SELF_PATH) == 0) {
+			swapped = true;
+		} else {
+			swap_errno = errno;
+			swap_res = fsdevGetLastResult();
+			rename(backup, SELF_PATH);
+		}
+	} else {
+		swap_errno = errno;
+		swap_res = fsdevGetLastResult();
+		printf("[update] rename ditolak (%s, fs 0x%x), coba tulis di tempat\n",
+				strerror(swap_errno), swap_res);
+
+		if (copy_over(SELF_PATH, backup)) {
+			if (copy_over(staged, SELF_PATH)) {
+				swapped = true;
+			} else {
+				/* The app on the card is half-written now, so the backup goes back
+				 * before anyone is told the update failed. */
+				copy_over(backup, SELF_PATH);
+			}
+		}
 	}
 
-	if (rename(staged, SELF_PATH) != 0) {
-		rename(backup, SELF_PATH);
+	if (!swapped) {
 		romfsInit();
 		remove(staged);
-		set_err(err, err_len, "Could not install: %s (fs 0x%x)", strerror(errno),
-				(unsigned)fsdevGetLastResult());
+		set_err(err, err_len, "Could not swap the app: %s (fs 0x%x)",
+				strerror(swap_errno), swap_res);
+		printf("[update] gagal menukar %s\n", SELF_PATH);
 		return false;
 	}
 
 	remove(backup);
+	romfsInit();
 
+	/*
+	 * Everything above only reached Horizon's cache of the directory. Without this
+	 * the new build runs for the rest of the session and is gone after a reboot --
+	 * the same trap that used to lose finished downloads in nxdrive.
+	 */
+	Result commit = fsdevCommitDevice("sdmc");
+	if (R_FAILED(commit)) {
+		set_err(err, err_len, "Installed but not saved to the card (fs 0x%x)",
+				(unsigned)commit);
+		printf("[update] commit sdmc gagal 0x%x\n", (unsigned)commit);
+		return false;
+	}
+
+	printf("[update] terpasang ke %s\n", SELF_PATH);
 	if (envHasNextLoad()) envSetNextLoad(SELF_PATH, SELF_PATH);
 	return true;
 }
