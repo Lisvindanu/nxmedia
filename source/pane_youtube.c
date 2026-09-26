@@ -70,6 +70,7 @@ static struct {
 	char query[MEDIA_SEARCH_MAX];
 	char note[NOTE_MAX];
 	int percent;
+	bool cancelled;
 	bool loaded;
 } pane;
 
@@ -225,14 +226,47 @@ static void listen_selected(void) {
 	stage_begin(item->title);
 }
 
+static UiHint WAIT_HINTS[] = {
+	{ "B", NULL, HidNpadButton_B, false },
+};
+
+/*
+ * Whether B was pressed since the last look. The frame loop is not running during
+ * a blocking transfer, so the pane cannot be handed the buttons the usual way and
+ * reads a pad of its own instead. libnx is happy with more than one: each keeps
+ * its own idea of what was held last, which is what "pressed" is measured against.
+ */
+static bool cancel_pressed(void) {
+	static PadState pad;
+	static bool ready;
+
+	if (!ready) {
+		padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+		padInitializeDefault(&pad);
+		ready = true;
+	}
+
+	padUpdate(&pad);
+	return (padGetButtonsDown(&pad) & HidNpadButton_B) != 0;
+}
+
 /* Both callbacks paint a whole frame themselves: the transfer blocks the loop, so
- * without that the console would look hung for the length of it. */
+ * without that the console would look hung for the length of it. Both also offer
+ * the way out, because a wait that runs for minutes and cannot be abandoned is
+ * indistinguishable from one that has hung. */
 static bool on_waiting(void *user, int seconds) {
 	(void)user;
 
+	WAIT_HINTS[0].label = T(STR_CANCEL);
+
 	char detail[NOTE_MAX];
 	snprintf(detail, sizeof(detail), "%s  (%d s)", T(STR_PREPARING), seconds);
-	ui_message(T(STR_PREPARING), detail, NULL, 0);
+	ui_message(T(STR_PREPARING), detail, WAIT_HINTS, 1);
+
+	if (cancel_pressed()) {
+		pane.cancelled = true;
+		return false;
+	}
 
 	return appletMainLoop();
 }
@@ -244,12 +278,20 @@ static bool on_progress(void *user, int64_t done, int64_t total) {
 	if (percent != pane.percent) {
 		pane.percent = percent;
 
+		WAIT_HINTS[0].label = T(STR_CANCEL);
+
 		char detail[NOTE_MAX];
 		snprintf(detail, sizeof(detail), "%s %d%%", T(STR_DOWNLOADING), percent);
-		ui_message(T(STR_DOWNLOADING), detail, NULL, 0);
+		ui_message(T(STR_DOWNLOADING), detail, WAIT_HINTS, 1);
 	}
 
-	/* Quitting mid-transfer leaves the .part file, which the next attempt resumes. */
+	/* Stopping mid-transfer leaves the .part file, which the next attempt resumes,
+	 * so giving up here costs only the time and none of the bytes. */
+	if (cancel_pressed()) {
+		pane.cancelled = true;
+		return false;
+	}
+
 	return appletMainLoop();
 }
 
@@ -260,11 +302,16 @@ static void watch_selected(void) {
 	const MediaItem *item = current_item();
 	if (!item || refuse_live(item)) return;
 
+	pane.cancelled = false;
+
 	char url[640];
 	char err[160];
 	if (!media_prepare_video(&pane.settings, item, url, sizeof(url), NULL, on_waiting,
 			err, sizeof(err))) {
-		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		/* Walking away is not a failure, and saying so in the words of whatever
+		 * call happened to unwind would read like one. */
+		snprintf(pane.note, sizeof(pane.note), "%.150s",
+				pane.cancelled ? T(STR_CANCELLED) : err);
 		return;
 	}
 
@@ -288,11 +335,16 @@ static void save_selected(void) {
 	}
 
 	pane.percent = -1;
+	pane.cancelled = false;
 
 	char err[160];
 	if (media_download(&pane.settings, item, SAVE_DIR, on_progress, NULL, on_waiting,
 			err, sizeof(err))) {
 		snprintf(pane.note, sizeof(pane.note), "%s: %.120s", T(STR_SAVED), item->filename);
+	} else if (pane.cancelled) {
+		/* The .part file stays behind, so pressing save again picks up where this
+		 * left off rather than starting the transfer over. */
+		snprintf(pane.note, sizeof(pane.note), "%s", T(STR_CANCELLED));
 	} else {
 		snprintf(pane.note, sizeof(pane.note), "%s: %.120s", T(STR_SAVE_FAIL), err);
 	}
