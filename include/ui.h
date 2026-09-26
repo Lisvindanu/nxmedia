@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "mediavault.h"
+
 /** One entry of the button-hint bar, drawn as a glyph badge inside a pill. */
 typedef struct {
 	const char *button;
@@ -94,6 +96,19 @@ void ui_rows(const UiRow *rows, size_t count, size_t selected, size_t total, siz
 
 /** Stands in for a list with nothing in it, so the screen is never simply blank. */
 void ui_empty(const char *label);
+
+/* Search results are their own shape: a picture, two lines of text, and far
+ * taller than a plain row, so only five fit. */
+#define UI_RESULT_ROWS 5
+void ui_results(const MediaListing *listing, size_t selected, size_t scroll);
+
+/** Visible result under the point, or -1. Rows here are not the shared size. */
+int ui_hit_result(int x, int y);
+
+/* Thumbnails are fetched and decoded off the main thread, so the cache behind the
+ * results list has a life of its own. It needs http_init to have run. */
+void ui_thumbs_init(void);
+void ui_thumbs_exit(void);
 
 /** Byte count in the largest unit that leaves a number worth reading. */
 void ui_format_size(int64_t bytes, char *out, size_t len);

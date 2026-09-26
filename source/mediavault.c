@@ -82,19 +82,9 @@ static bool read_item(json_object *node, MediaItem *out) {
 	return true;
 }
 
-bool media_search(const Settings *cfg, const char *text, MediaListing *out,
-		char *err, size_t err_len) {
+/* Search and trending answer with the same envelope, so they share a reader. */
+static bool fetch_listing(const char *url, MediaListing *out, char *err, size_t err_len) {
 	*out = (MediaListing){0};
-
-	char *escaped = http_escape(text);
-	if (!escaped) {
-		set_err(err, err_len, "gagal menyusun URL pencarian");
-		return false;
-	}
-
-	char url[768];
-	snprintf(url, sizeof(url), "%s/search?q=%s", cfg->mediavault_url, escaped);
-	http_free_escaped(escaped);
 
 	HttpBuffer body = {0};
 	if (!http_get(url, NULL, &body, err, err_len)) return false;
@@ -106,7 +96,7 @@ bool media_search(const Settings *cfg, const char *text, MediaListing *out,
 	if (!root || !json_object_object_get_ex(root, "data", &data) ||
 			!json_object_is_type(data, json_type_array)) {
 		if (root) json_object_put(root);
-		set_err(err, err_len, "jawaban pencarian tidak dikenali");
+		set_err(err, err_len, "jawaban server tidak dikenali");
 		return false;
 	}
 
@@ -131,6 +121,28 @@ bool media_search(const Settings *cfg, const char *text, MediaListing *out,
 
 	json_object_put(root);
 	return true;
+}
+
+bool media_trending(const Settings *cfg, MediaListing *out, char *err, size_t err_len) {
+	char url[640];
+	snprintf(url, sizeof(url), "%s/trending", cfg->mediavault_url);
+	return fetch_listing(url, out, err, err_len);
+}
+
+bool media_search(const Settings *cfg, const char *text, MediaListing *out,
+		char *err, size_t err_len) {
+	char *escaped = http_escape(text);
+	if (!escaped) {
+		*out = (MediaListing){0};
+		set_err(err, err_len, "gagal menyusun URL pencarian");
+		return false;
+	}
+
+	char url[768];
+	snprintf(url, sizeof(url), "%s/search?q=%s", cfg->mediavault_url, escaped);
+	http_free_escaped(escaped);
+
+	return fetch_listing(url, out, err, err_len);
 }
 
 typedef struct {

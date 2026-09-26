@@ -19,8 +19,12 @@
 #define HERO_W 668
 #define SIDE_X (HOME_X + HERO_W + TILE_GAP)
 #define SIDE_W (HOME_RIGHT - SIDE_X)
-#define SIDE_H ((TILE_BOTTOM - TILE_TOP - TILE_GAP) / 2)
-#define SIDE_LOW_Y (TILE_TOP + SIDE_H + TILE_GAP)
+/* Three rows down the right column, not two: YouTube earns a full-width band of
+ * its own between them, because it is the one tile that brings something new in
+ * from outside rather than listing what is already on the card. */
+#define SIDE_H ((TILE_BOTTOM - TILE_TOP - 2 * TILE_GAP) / 3)
+#define SIDE_MID_Y (TILE_TOP + SIDE_H + TILE_GAP)
+#define SIDE_LOW_Y (TILE_TOP + 2 * (SIDE_H + TILE_GAP))
 #define SIDE_HALF_W ((SIDE_W - TILE_GAP) / 2)
 
 /* Room kept clear below the globe so the hero's own words never sit on top of it. */
@@ -30,6 +34,7 @@
 static const UiRect TILE[] = {
 	{ HOME_X, TILE_TOP, HERO_W, TILE_BOTTOM - TILE_TOP },
 	{ SIDE_X, TILE_TOP, SIDE_W, SIDE_H },
+	{ SIDE_X, SIDE_MID_Y, SIDE_W, SIDE_H },
 	{ SIDE_X, SIDE_LOW_Y, SIDE_HALF_W, SIDE_H },
 	{ SIDE_X + SIDE_HALF_W + TILE_GAP, SIDE_LOW_Y, SIDE_HALF_W, SIDE_H },
 };

@@ -15,13 +15,15 @@
 #include "touch.h"
 #include "ui.h"
 #include "update.h"
+#include "pane_youtube.h"
 #include "world.h"
 
 #define COUNT_OF(a) (sizeof(a) / sizeof((a)[0]))
 
 #define SECTION_MUSIC 1
-#define SECTION_VIDEO 2
-#define SECTION_SETTINGS 3
+#define SECTION_YOUTUBE 2
+#define SECTION_VIDEO 3
+#define SECTION_SETTINGS 4
 
 #define SETTING_LANGUAGE 0
 #define SETTING_UPDATE 1
@@ -40,14 +42,15 @@ static UiTile TILES[] = {
 	{ NULL, NULL, true },
 	{ NULL, NULL, true },
 	{ NULL, NULL, true },
+	{ NULL, NULL, true },
 };
 
 /* The bento is irregular, so each move is spelled out rather than derived from a
  * grid that does not exist. */
-static const size_t HOME_LEFT[] = { 0, 0, 0, 2 };
-static const size_t HOME_RIGHT[] = { 1, 1, 3, 3 };
-static const size_t HOME_UP[] = { 0, 1, 1, 1 };
-static const size_t HOME_DOWN[] = { 0, 2, 2, 3 };
+static const size_t HOME_LEFT[] = { 0, 0, 0, 0, 3 };
+static const size_t HOME_RIGHT[] = { 1, 1, 2, 4, 4 };
+static const size_t HOME_UP[] = { 0, 1, 1, 2, 2 };
+static const size_t HOME_DOWN[] = { 0, 2, 3, 3, 4 };
 
 static UiHint HINT_HOME[] = {
 	{ "A", NULL, HidNpadButton_A, true },
@@ -87,10 +90,12 @@ static void refresh_strings(void) {
 	TILES[0].blurb = T(STR_RADIO_BLURB);
 	TILES[1].title = T(STR_MUSIC);
 	TILES[1].blurb = T(STR_MUSIC_BLURB);
-	TILES[2].title = T(STR_VIDEO);
-	TILES[2].blurb = T(STR_VIDEO_BLURB);
-	TILES[3].title = T(STR_SETTINGS);
-	TILES[3].blurb = T(STR_SETTINGS_BLURB);
+	TILES[2].title = T(STR_YT);
+	TILES[2].blurb = T(STR_YT_BLURB);
+	TILES[3].title = T(STR_VIDEO);
+	TILES[3].blurb = T(STR_VIDEO_BLURB);
+	TILES[4].title = T(STR_SETTINGS);
+	TILES[4].blurb = T(STR_SETTINGS_BLURB);
 
 	HINT_HOME[0].label = T(STR_OPEN);
 	HINT_HOME[1].label = T(STR_SCREEN_OFF);
@@ -206,6 +211,8 @@ static void draw(App *app) {
 		ui_footer(HINT_RADIO, COUNT_OF(HINT_RADIO), app->held);
 	} else if (app->section == SECTION_MUSIC) {
 		media_pane_draw(&app->music, T(STR_MUSIC_EYEBROW), app->held);
+	} else if (app->section == SECTION_YOUTUBE) {
+		youtube_pane_draw(app->held);
 	} else if (app->section == SECTION_VIDEO) {
 		video_pane_draw(app->held);
 	} else {
@@ -419,6 +426,11 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 
+	/* The thumbnail thread fetches over the network, so it starts only once curl and
+	 * the socket stack exist -- and at shutdown it stops before they go away again.
+	 * Starting it inside ui_init would put it ahead of both. */
+	ui_thumbs_init();
+
 	power_init();
 	touch_init();
 
@@ -477,6 +489,9 @@ int main(int argc, char **argv) {
 			} else if (app.section == SECTION_MUSIC) {
 				media_pane_touch(&app.music, touch.x, touch.y);
 				app.dirty = true;
+			} else if (app.section == SECTION_YOUTUBE) {
+				youtube_pane_touch(touch.x, touch.y);
+				app.dirty = true;
 			} else if (app.section == SECTION_VIDEO) {
 				video_pane_touch(touch.x, touch.y);
 				app.dirty = true;
@@ -512,6 +527,7 @@ int main(int argc, char **argv) {
 			if (down & HidNpadButton_A) {
 				app.home = false;
 				if (app.section == SECTION_MUSIC) media_pane_open(&app.music, LibraryKind_Audio);
+				if (app.section == SECTION_YOUTUBE) youtube_pane_open();
 				if (app.section == SECTION_VIDEO) video_pane_open();
 			}
 			if (down) app.dirty = true;
@@ -519,6 +535,9 @@ int main(int argc, char **argv) {
 			/* B walks back up the card first and only gives up the section once it is
 			 * standing at the root. */
 			if (!media_pane_input(&app.music, down)) app.home = true;
+			if (down) app.dirty = true;
+		} else if (app.section == SECTION_YOUTUBE) {
+			if (!youtube_pane_input(down)) app.home = true;
 			if (down) app.dirty = true;
 		} else if (app.section == SECTION_VIDEO) {
 			/* The pane spends B walking back up the card, so it only reaches the home
@@ -626,9 +645,11 @@ int main(int argc, char **argv) {
 
 	power_exit();
 	player_exit();
+	youtube_pane_exit();
 	video_pane_exit();
 	media_pane_exit(&app.music);
 	radio_free();
+	ui_thumbs_exit();
 	http_exit();
 	sslExit();
 	socketExit();

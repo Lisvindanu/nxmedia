@@ -43,6 +43,12 @@ typedef struct {
 void media_listing_free(MediaListing *listing);
 void media_item_free(MediaItem *item);
 
+/**
+ * What the server is showing everyone right now. Fetched when the pane opens so
+ * there is something to look at before anyone has thought of a search term.
+ */
+bool media_trending(const Settings *cfg, MediaListing *out, char *err, size_t err_len);
+
 /** Searches YouTube through the server. Text is sent as typed. */
 bool media_search(const Settings *cfg, const char *text, MediaListing *out,
 		char *err, size_t err_len);

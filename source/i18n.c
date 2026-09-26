@@ -103,6 +103,18 @@ static const char *const STRINGS[STR_COUNT][LANG_COUNT] = {
 	[STR_NET_FAIL_WHY] = { "socketInitialize refused by the system",
 			"socketInitialize ditolak sistem" },
 	[STR_AUDIO_FAIL] = { "Could not set up audio", "Gagal menyiapkan audio" },
+
+	[STR_YT] = { "YouTube", "YouTube" },
+	[STR_YT_BLURB] = { "search, play, save", "cari, putar, simpan" },
+	[STR_YT_EYEBROW] = { "from the server", "lewat server" },
+	[STR_YT_EMPTY] = { "Nothing came back. Press Y to search.", "Tidak ada yang kembali. Tekan Y untuk mencari." },
+	[STR_SEARCH] = { "search", "cari" },
+	[STR_SEARCH_HEADER] = { "Search YouTube", "Cari di YouTube" },
+	[STR_SEARCHING] = { "Searching", "Mencari" },
+	[STR_SAVE] = { "save video", "simpan video" },
+	[STR_PREPARING] = { "Preparing on the server", "Disiapkan server" },
+	[STR_SAVED] = { "Saved to the card", "Tersimpan ke kartu" },
+	[STR_SAVE_FAIL] = { "Could not save", "Gagal menyimpan" },
 };
 
 static const char *const NAMES[LANG_COUNT] = { "English", "Bahasa Indonesia" };
