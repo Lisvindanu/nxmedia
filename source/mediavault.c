@@ -17,12 +17,18 @@
  * them, which leaves room for the rest of the queue. */
 #define POLL_EVERY_SECONDS 6
 
-/* Merging runs at roughly a fifth of playback time on the server we use, measured
- * at 21 seconds for a four-minute video. Tripling that leaves room for a loaded
- * server without making a stuck job hang around forever. */
+/*
+ * Merging runs at roughly a third of playback time: measured twice on the server
+ * we use, 60 seconds for a 3m33s video and 184 seconds for a ten-minute one, which
+ * is 0.28 and 0.31 of their length. Budgeting double that absorbs a loaded server
+ * without letting a job that is truly stuck hang around forever.
+ *
+ * The ceiling has to clear the longest thing anyone would queue: at a third of
+ * real time, half an hour of budget covers a video of about an hour and a half.
+ */
 #define WAIT_PER_SECOND_OF_VIDEO 0.6
 #define WAIT_FLOOR_SECONDS 90
-#define WAIT_CEILING_SECONDS 900
+#define WAIT_CEILING_SECONDS 1800
 /* Room for whatever the server has to say when it turns a request down. */
 #define MESSAGE_MAX 160
 
