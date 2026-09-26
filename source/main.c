@@ -469,7 +469,7 @@ int main(int argc, char **argv) {
 				/* Nothing under the picture is reachable, but the bar along the
 				 * bottom still is: it is drawn over it, and a tap anywhere else
 				 * brings it back once it has hidden itself. */
-				stage_wake();
+				if (!stage_scrub(touch.x, touch.y)) stage_wake();
 				app.dirty = true;
 			} else if (app.home) {
 				int hit = ui_hit_home(touch.x, touch.y);
@@ -499,7 +499,11 @@ int main(int argc, char **argv) {
 			down |= ui_hit_footer(touch.x, touch.y);
 		}
 
-		if (touch.kind == TOUCH_DRAG && !app.home && app.section == 0) {
+		/* Dragging along the scrub bar pulls the playhead with the finger, so the
+		 * stage gets the drag before the globe does. */
+		if (touch.kind == TOUCH_DRAG && stage_active()) {
+			if (stage_scrub(touch.x, touch.y)) app.dirty = true;
+		} else if (touch.kind == TOUCH_DRAG && !app.home && app.section == 0) {
 			globe_drag(&app.globe, touch.dx, touch.dy);
 			app.gliding = false;
 			app.dirty = true;

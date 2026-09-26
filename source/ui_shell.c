@@ -127,13 +127,35 @@ void ui_header(const char *eyebrow, const char *title, const char *subtitle) {
  * picture is still there underneath it. */
 #define SCRIM_H 116
 
-void ui_theater(const char *title, const char *status) {
+UiRect ui_theater_scrub(void) {
+	/* A band rather than the bar itself: the track is four pixels tall, which no
+	 * thumb can be expected to land on. */
+	return (UiRect){ CONTENT_X, SCRUB_Y - 18, CONTENT_W, 40 };
+}
+
+void ui_theater(const char *title, const char *status, double progress) {
 	SDL_Color scrim = { 0x00, 0x00, 0x00, 0xAA };
 	ui_fill_rect(0, 0, SCREEN_W, SCRIM_H, scrim);
-	ui_fill_rect(0, FOOTER_Y, SCREEN_W, SCREEN_H - FOOTER_Y, scrim);
+	ui_fill_rect(0, SCRUB_Y - 24, SCREEN_W, SCREEN_H - SCRUB_Y + 24, scrim);
 
 	ui_draw_text(CONTENT_X, 48, FONT_TITLE, COLOR_TEXT, title, CONTENT_W);
 	ui_draw_text(CONTENT_X + 1, 86, FONT_SMALL, COLOR_DIM, status, CONTENT_W);
+
+	/* A live stream has no end to travel towards, so it gets no bar at all rather
+	 * than one that never moves. */
+	if (progress < 0) return;
+	if (progress > 1.0) progress = 1.0;
+
+	int filled = (int)(CONTENT_W * progress);
+
+	ui_fill_round_rect(CONTENT_X, SCRUB_Y, CONTENT_W, SCRUB_H, SCRUB_H / 2, COLOR_RULE);
+	if (filled > 0) {
+		ui_fill_round_rect(CONTENT_X, SCRUB_Y, filled, SCRUB_H, SCRUB_H / 2, COLOR_ACCENT);
+	}
+
+	/* The knob is what says the bar can be moved, not just watched. */
+	ui_fill_round_rect(CONTENT_X + filled - SCRUB_KNOB / 2, SCRUB_Y + SCRUB_H / 2 - SCRUB_KNOB / 2,
+			SCRUB_KNOB, SCRUB_KNOB, SCRUB_KNOB / 2, COLOR_TEXT);
 }
 
 void ui_message(const char *label, const char *detail, const UiHint *hints, size_t count) {

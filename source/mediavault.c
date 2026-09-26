@@ -264,6 +264,21 @@ static bool wait_until_ready(const Settings *cfg, const MediaItem *item,
 	}
 }
 
+bool media_prepare_video(const Settings *cfg, const MediaItem *item,
+		char *url_out, size_t url_len, void *user, MediaWaiting on_waiting,
+		char *err, size_t err_len) {
+	MediaState state;
+	if (!wait_until_ready(cfg, item, &state, user, on_waiting, err, err_len)) return false;
+
+	if (!state.url[0]) {
+		set_err(err, err_len, "server bilang siap tapi tidak memberi URL");
+		return false;
+	}
+
+	snprintf(url_out, url_len, "%s", state.url);
+	return true;
+}
+
 bool media_download(const Settings *cfg, const MediaItem *item, const char *dest_dir,
 		HttpProgress on_progress, void *user, MediaWaiting on_waiting,
 		char *err, size_t err_len) {

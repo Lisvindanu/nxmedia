@@ -72,6 +72,17 @@ bool media_prepare_audio(const Settings *cfg, const MediaItem *item,
 		char *url_out, size_t url_len, char *err, size_t err_len);
 
 /**
+ * Waits for the server to finish merging, then reports a URL the player can open.
+ *
+ * The same file the download uses: a complete MP4 served with byte ranges, which
+ * ffmpeg streams as happily as it reads one off the card -- and being seekable is
+ * what lets the scrub bar work on it. Nothing is written to the card.
+ */
+bool media_prepare_video(const Settings *cfg, const MediaItem *item,
+		char *url_out, size_t url_len, void *user, MediaWaiting on_waiting,
+		char *err, size_t err_len);
+
+/**
  * Waits for the server to have the file, then downloads it into dest_dir.
  *
  * The wait is budgeted from the video's duration rather than a fixed number:

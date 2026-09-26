@@ -23,6 +23,11 @@
 #define HEADER_RULE_Y 136
 #define FOOTER_Y 636
 
+/* The scrub bar sits above the hint bar, inside the same darkened band. */
+#define SCRUB_Y 610
+#define SCRUB_H 4
+#define SCRUB_KNOB 14
+
 /* The list fills the gap between the header rule and the hint bar. Eight rows is
  * what a 52px row leaves room for without crowding either edge. */
 #define LIST_TOP 164

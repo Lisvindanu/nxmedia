@@ -74,6 +74,37 @@ static void seek_by(double delta) {
 	player_seek(target);
 }
 
+static bool overlay_up(void);
+
+/**
+ * Turns a touch on the scrub bar into a position. Returns false when the finger
+ * was somewhere else, so the caller can fall back to simply waking the overlay.
+ *
+ * Dragging works the same as tapping, one seek per frame the finger moves, which
+ * is what makes it feel like pulling the playhead rather than nudging it.
+ */
+bool stage_scrub(int x, int y) {
+	if (!overlay_up() || !player_can_seek()) return false;
+
+	double total = player_duration();
+	if (total <= 0) return false;
+
+	UiRect bar = ui_theater_scrub();
+	if (x < bar.x || x > bar.x + bar.w || y < bar.y || y > bar.y + bar.h) return false;
+
+	double fraction = (double)(x - bar.x) / (double)bar.w;
+	if (fraction < 0) fraction = 0;
+	if (fraction > 1.0) fraction = 1.0;
+
+	/* Landing exactly on the end would read as a file that stopped by itself. */
+	double target = fraction * total;
+	if (target > total - 1.0) target = total - 1.0;
+
+	stage_wake();
+	player_seek(target);
+	return true;
+}
+
 void stage_input(uint64_t down) {
 	if (down) stage_wake();
 
@@ -136,7 +167,10 @@ void stage_draw(uint64_t held) {
 
 	char status[192];
 	status_line(status, sizeof(status));
-	ui_theater(st.title, status);
+
+	double total = player_duration();
+	double progress = (total > 0 && player_can_seek()) ? player_position() / total : -1.0;
+	ui_theater(st.title, status, progress);
 
 	HINTS[0].label = player_is_paused() ? T(STR_RESUME) : T(STR_PAUSE);
 	HINTS[1].label = T(STR_STOP);

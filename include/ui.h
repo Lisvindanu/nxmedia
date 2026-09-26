@@ -123,7 +123,14 @@ UiRect ui_stage(void);
  * Title and playback state laid over a picture, on bands dark enough to read them
  * against. Drawn before the hint bar, which sits on the lower band.
  */
-void ui_theater(const char *title, const char *status);
+/**
+ * The transport overlay. `progress` runs 0 to 1, or is negative for a source with
+ * no end -- a live channel gets no bar rather than one that never fills.
+ */
+void ui_theater(const char *title, const char *status, double progress);
+
+/** Where a finger has to land to move the scrub bar. */
+UiRect ui_theater_scrub(void);
 
 /** Self-contained screen: paints a whole frame and presents it. */
 void ui_message(const char *label, const char *detail, const UiHint *hints, size_t count);

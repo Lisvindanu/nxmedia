@@ -22,11 +22,12 @@
  * a blank screen and a keyboard would make the visitor think of something before
  * they have seen anything at all.
  *
- * The two buttons do genuinely different things because the server offers two
- * different routes. Audio is proxied live and starts at once, which is what makes
- * this usable as a music player. Video has no public streaming route, so saving it
- * is the only way to watch it -- the file lands on the card and plays from the
- * Card branch like anything else there.
+ * Watching and listening are separate buttons because the server offers two
+ * genuinely different routes, at two very different costs. Audio is proxied and
+ * starts in a few seconds, which is what makes this usable as a music player.
+ * Video has to be merged first, half a minute of it, so asking for a picture is a
+ * decision rather than the default -- and the merged file is streamed rather than
+ * kept, since it is seekable over HTTP and the card need not be involved.
  */
 
 #define SAVE_DIR "sdmc:/nxmedia"
@@ -35,6 +36,7 @@
 static UiHint HINTS[] = {
 	{ "A", NULL, HidNpadButton_A, true },
 	{ "X", NULL, HidNpadButton_X, false },
+	{ "ZR", NULL, HidNpadButton_ZR, false },
 	{ "Y", NULL, HidNpadButton_Y, false },
 	{ "B", NULL, HidNpadButton_B, false },
 };
@@ -111,7 +113,9 @@ static void search(void) {
 
 /* --- playing and saving -------------------------------------------------- */
 
-static void play_selected(void) {
+/* Audio only, and instant. Worth its own button because a song does not need the
+ * server to spend half a minute merging a picture nobody is going to look at. */
+static void listen_selected(void) {
 	if (pane.selected >= pane.list.count) return;
 	const MediaItem *item = &pane.list.items[pane.selected];
 
@@ -164,6 +168,30 @@ static bool on_progress(void *user, int64_t done, int64_t total) {
 	return appletMainLoop();
 }
 
+/* Streams the very file the save button would write, without writing it. The
+ * server has to merge it first either way, so the wait is the same; what differs
+ * is that nothing lands on the card. */
+static void watch_selected(void) {
+	if (pane.selected >= pane.list.count) return;
+	const MediaItem *item = &pane.list.items[pane.selected];
+
+	char url[640];
+	char err[160];
+	if (!media_prepare_video(&pane.settings, item, url, sizeof(url), NULL, on_waiting,
+			err, sizeof(err))) {
+		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		return;
+	}
+
+	if (!player_play(url, NULL, err, sizeof(err))) {
+		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		return;
+	}
+
+	pane.note[0] = '\0';
+	stage_begin(item->title);
+}
+
 static void save_selected(void) {
 	if (pane.selected >= pane.list.count) return;
 	const MediaItem *item = &pane.list.items[pane.selected];
@@ -189,8 +217,9 @@ static void save_selected(void) {
 bool youtube_pane_input(uint64_t down) {
 	if (down & HidNpadButton_Down) move(1);
 	if (down & HidNpadButton_Up) move(-1);
-	if (down & HidNpadButton_A) play_selected();
-	if (down & HidNpadButton_X) save_selected();
+	if (down & HidNpadButton_A) watch_selected();
+	if (down & HidNpadButton_X) listen_selected();
+	if (down & HidNpadButton_ZR) save_selected();
 	if (down & HidNpadButton_Y) search();
 	if (down & HidNpadButton_B) return false;
 
@@ -205,14 +234,15 @@ void youtube_pane_touch(int x, int y) {
 	if (index >= pane.list.count) return;
 
 	pane.selected = index;
-	play_selected();
+	watch_selected();
 }
 
 void youtube_pane_draw(uint64_t held) {
-	HINTS[0].label = T(STR_PLAY);
-	HINTS[1].label = T(STR_SAVE);
-	HINTS[2].label = T(STR_SEARCH);
-	HINTS[3].label = T(STR_BACK);
+	HINTS[0].label = T(STR_WATCH);
+	HINTS[1].label = T(STR_LISTEN);
+	HINTS[2].label = T(STR_SAVE);
+	HINTS[3].label = T(STR_SEARCH);
+	HINTS[4].label = T(STR_BACK);
 
 	char title[96];
 	if (pane.list.count > 0) {

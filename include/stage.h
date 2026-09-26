@@ -29,6 +29,12 @@ bool stage_animating(void);
 
 void stage_input(uint64_t down);
 
+/**
+ * Offers a touch to the scrub bar. True means it moved the playhead; false means
+ * the finger was elsewhere and the touch is the caller's to deal with.
+ */
+bool stage_scrub(int x, int y);
+
 /** Brings the title and hint bar back over a picture that has hidden them. */
 void stage_wake(void);
 
