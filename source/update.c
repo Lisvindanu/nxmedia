@@ -26,7 +26,23 @@ static char SELF_PATH[PATH_MAX_LEN] = FALLBACK_SELF_PATH;
 
 void update_init(const char *self_path) {
 	if (!self_path || !*self_path) return;
-	if (!strstr(self_path, ".nro")) return;
+
+	/*
+	 * Only a path whose file name is this app's own is trusted.
+	 *
+	 * The updater writes over whatever this points at, and a launcher is free to
+	 * hand over something else entirely -- which is how an app could destroy the
+	 * very forwarder that launched it. Checking for ".nro" anywhere in the string
+	 * was never enough to rule that out. Anything unrecognised is ignored in favour
+	 * of the known install path.
+	 */
+	const char *name = strrchr(self_path, '/');
+	name = name ? name + 1 : self_path;
+
+	if (strcmp(name, ASSET_NAME) != 0) {
+		printf("[update] argv[0] asing (%s), tetap memakai %s\n", self_path, SELF_PATH);
+		return;
+	}
 
 	/* A path without a device prefix resolves against whichever device happens to be
 	 * current, which is not necessarily the SD card the app was launched from. */
@@ -36,6 +52,10 @@ void update_init(const char *self_path) {
 		snprintf(SELF_PATH, sizeof(SELF_PATH), "sdmc:%s%s",
 				*self_path == '/' ? "" : "/", self_path);
 	}
+
+	/* Printed every launch: this one value decides which file a later update
+	 * overwrites, and it is not otherwise visible from anywhere. */
+	printf("[update] path diri: %s\n", SELF_PATH);
 }
 
 const char *update_version(void) {
