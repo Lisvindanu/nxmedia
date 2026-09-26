@@ -6,6 +6,10 @@
 
 #include <json-c/json.h>
 
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
+
 #include "util.h"
 
 /* Overridable so the host test can point the lists at a scratch directory; the
@@ -173,6 +177,19 @@ static void save_one(ShelfKind kind) {
 	if (file) {
 		fputs(text, file);
 		fclose(file);
+
+		/*
+		 * Closing only empties stdio into the filesystem; the directory entry stays
+		 * in Horizon's cache until the device is committed. Without this the lists
+		 * read back fine all session and are gone after a reboot -- the same trap
+		 * that lost finished downloads in nxdrive and nearly lost the self-update.
+		 *
+		 * Guarded because this file is also built by the host test, where there is
+		 * no Horizon and the write has already reached the disk.
+		 */
+#ifdef __SWITCH__
+		fsdevCommitDevice("sdmc");
+#endif
 	}
 
 	json_object_put(root);
