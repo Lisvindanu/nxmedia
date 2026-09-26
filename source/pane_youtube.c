@@ -126,11 +126,22 @@ static void search(void) {
 
 /* --- playing and saving -------------------------------------------------- */
 
+/* A live stream has no length and no finished file behind it, so the server can
+ * neither merge it nor proxy it. Refusing here costs nothing; letting it through
+ * costs a minute of waiting for a failure that was knowable in advance. */
+static bool refuse_live(const MediaItem *item) {
+	if (item->duration > 0) return false;
+
+	snprintf(pane.note, sizeof(pane.note), "%s", T(STR_LIVE_NO_SUPPORT));
+	return true;
+}
+
 /* Audio only, and instant. Worth its own button because a song does not need the
  * server to spend half a minute merging a picture nobody is going to look at. */
 static void listen_selected(void) {
 	if (pane.selected >= pane.list.count) return;
 	const MediaItem *item = &pane.list.items[pane.selected];
+	if (refuse_live(item)) return;
 
 	/* Resolved first, then played. The proxy stays silent until yt-dlp has finished
 	 * with a cold video, which outlasts ffmpeg's own read timeout -- so asking the
@@ -187,6 +198,7 @@ static bool on_progress(void *user, int64_t done, int64_t total) {
 static void watch_selected(void) {
 	if (pane.selected >= pane.list.count) return;
 	const MediaItem *item = &pane.list.items[pane.selected];
+	if (refuse_live(item)) return;
 
 	char url[640];
 	char err[160];
@@ -208,6 +220,7 @@ static void watch_selected(void) {
 static void save_selected(void) {
 	if (pane.selected >= pane.list.count) return;
 	const MediaItem *item = &pane.list.items[pane.selected];
+	if (refuse_live(item)) return;
 
 	if (!mkdir_p(SAVE_DIR)) {
 		snprintf(pane.note, sizeof(pane.note), "%s: %s", T(STR_SAVE_FAIL), SAVE_DIR);

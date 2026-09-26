@@ -9,6 +9,7 @@
 #include <switch.h>
 
 #include "http.h"
+#include "i18n.h"
 
 /*
  * Search results, and the thumbnail cache behind them.
@@ -329,15 +330,22 @@ static void draw_thumb(const MediaItem *item, int x, int y, int w, int h) {
 	SDL_Rect dst = { x, y, w, h };
 	SDL_RenderCopy(ui_renderer, texture, NULL, &dst);
 
-	char time[16];
-	format_duration(item->duration, time, sizeof(time));
+	/* A video with no length is a live stream. It gets a chip of its own rather
+	 * than "--:--", because the difference is not that the length is unknown but
+	 * that the thing cannot be fetched at all. */
+	bool live = item->duration <= 0;
+
+	char time[24];
+	snprintf(time, sizeof(time), "%s", live ? T(STR_LIVE_CHIP) : "");
+	if (!live) format_duration(item->duration, time, sizeof(time));
 
 	int badge_w = ui_measure_text(FONT_SMALL, time) + 14;
 	int badge_x = x + w - badge_w - 8;
 	int badge_y = y + h - 26;
 
-	ui_fill_round_rect(badge_x, badge_y, badge_w, 20, 4, COLOR_SHADE);
-	ui_draw_text(badge_x + 7, badge_y + 10, FONT_SMALL, COLOR_TEXT, time, badge_w);
+	ui_fill_round_rect(badge_x, badge_y, badge_w, 20, 4, live ? COLOR_LIVE : COLOR_SHADE);
+	ui_draw_text(badge_x + 7, badge_y + 10, FONT_SMALL,
+			live ? COLOR_ON_ACCENT : COLOR_TEXT, time, badge_w);
 }
 
 static void draw_card(const MediaItem *item, int x, int y, bool focused) {
