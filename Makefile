@@ -26,7 +26,7 @@ ROMFS		:=	romfs
 
 APP_TITLE	:=	nxmedia
 APP_AUTHOR	:=	anaphygon
-APP_VERSION	:=	1.2.0
+APP_VERSION	:=	1.3.0
 
 #---------------------------------------------------------------------------------
 # options for code generation
