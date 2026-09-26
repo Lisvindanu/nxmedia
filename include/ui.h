@@ -104,6 +104,9 @@ void ui_empty(const char *label);
 #define UI_RESULT_CELLS (UI_RESULT_ROWS * UI_RESULT_COLS)
 void ui_results(const MediaListing *listing, size_t selected, size_t scroll);
 
+/** The row of source names above the grid: trending, history, favourites. */
+void ui_result_tabs(const char *const *labels, size_t count, size_t active);
+
 /** Visible result under the point, or -1. Rows here are not the shared size. */
 int ui_hit_result(int x, int y);
 

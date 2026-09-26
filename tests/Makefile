@@ -7,11 +7,14 @@
 CC      ?= cc
 CFLAGS  := -O2 -Wall -Wextra -I../include
 LDLIBS  := -lm
+
+JSONC_CFLAGS := $(shell pkg-config --cflags json-c 2>/dev/null)
+JSONC_LIBS   := $(shell pkg-config --libs json-c 2>/dev/null)
 SHARED  := ../source/world.c ../source/util.c
 
 BINDIR  := build
 TESTS   := $(BINDIR)/test_world $(BINDIR)/test_projection $(BINDIR)/test_version \
-           $(BINDIR)/test_sanitize
+           $(BINDIR)/test_sanitize $(BINDIR)/test_shelf
 
 .PHONY: all clean
 all: $(TESTS)
@@ -28,6 +31,12 @@ $(BINDIR)/test_version: test_version.c ../source/util.c | $(BINDIR)
 
 $(BINDIR)/test_sanitize: test_sanitize.c ../source/util.c | $(BINDIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+# The shelf writes JSON, so this one needs the real library and a scratch
+# directory standing in for the card.
+$(BINDIR)/test_shelf: test_shelf.c ../source/shelf.c ../source/media_item.c ../source/util.c | $(BINDIR)
+	$(CC) $(CFLAGS) -DSHELF_DIR='"/tmp/nxmedia-shelf-test"' $(JSONC_CFLAGS) \
+		-o $@ $^ $(LDLIBS) $(JSONC_LIBS)
 
 $(BINDIR):
 	@mkdir -p $@

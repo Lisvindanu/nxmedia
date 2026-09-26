@@ -48,21 +48,6 @@ static int64_t int_field(json_object *obj, const char *key) {
 	return json_object_get_int64(value);
 }
 
-void media_item_free(MediaItem *item) {
-	free(item->id);
-	free(item->title);
-	free(item->filename);
-	free(item->author);
-	*item = (MediaItem){0};
-}
-
-void media_listing_free(MediaListing *listing) {
-	for (size_t i = 0; i < listing->count; i++) media_item_free(&listing->items[i]);
-	free(listing->items);
-	listing->items = NULL;
-	listing->count = 0;
-}
-
 /** Copies one search result out of the array. False means it was unusable. */
 static bool read_item(json_object *node, MediaItem *out) {
 	const char *id = string_field(node, "videoId");

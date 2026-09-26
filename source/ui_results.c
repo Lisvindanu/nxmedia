@@ -43,6 +43,11 @@
  * side stay put, so the grown one reads as lifted rather than as a shifted grid. */
 #define FOCUS_GROW 8
 
+/* The header rule sits at 136 and the grid starts at 164, which leaves exactly
+ * enough room for a row of pills without taking any from the cards. */
+#define TAB_Y 140
+#define TAB_H 22
+
 /* Decoded at the size the focused card draws it, not the size the others do, so
  * growing one never stretches it past the pixels it actually has. The unfocused
  * cards shrink it slightly instead, which is the direction that looks fine. */
@@ -379,6 +384,28 @@ static void draw_card(const MediaItem *item, int x, int y, bool focused) {
 	}
 
 	ui_draw_text(x, text_y + 26, FONT_SMALL, COLOR_DIM, meta, CARD_W);
+}
+
+/*
+ * The strip of source names above the grid. It fits in the gap the header rule
+ * already leaves, so adding it costs the cards no height.
+ */
+void ui_result_tabs(const char *const *labels, size_t count, size_t active) {
+	int x = CONTENT_X;
+
+	for (size_t i = 0; i < count; i++) {
+		int text_w = ui_measure_text(FONT_SMALL, labels[i]);
+		int pill_w = text_w + 26;
+
+		if (i == active) {
+			ui_fill_round_rect(x, TAB_Y, pill_w, TAB_H, TAB_H / 2, COLOR_ACCENT);
+		}
+
+		ui_draw_text(x + 13, TAB_Y + TAB_H / 2, FONT_SMALL,
+				i == active ? COLOR_ON_ACCENT : COLOR_DIM, labels[i], pill_w);
+
+		x += pill_w + 8;
+	}
 }
 
 static void card_origin(size_t cell, int *x, int *y) {

@@ -10,13 +10,14 @@
 #include "mediavault.h"
 #include "player.h"
 #include "settings.h"
+#include "shelf.h"
 #include "stage.h"
 #include "ui.h"
 #include "util.h"
 
 /*
  * YouTube by way of the MediaVault server: what is popular now, whatever you
- * search for, played as sound or kept on the card as video.
+ * search for, and the two lists the card remembers by itself.
  *
  * The pane fills itself on the way in rather than waiting to be asked. Opening to
  * a blank screen and a keyboard would make the visitor think of something before
@@ -33,29 +34,82 @@
 #define SAVE_DIR "sdmc:/nxmedia"
 #define NOTE_MAX 192
 
+/* Where the cards on screen come from. Browse holds whatever the server last
+ * answered with; the other two answer from the card. */
+typedef enum {
+	SRC_BROWSE,
+	SRC_HISTORY,
+	SRC_FAVOURITES,
+	SRC_COUNT,
+} Source;
+
 static UiHint HINTS[] = {
 	{ "A", NULL, HidNpadButton_A, true },
 	{ "X", NULL, HidNpadButton_X, false },
-	{ "ZR", NULL, HidNpadButton_ZR, false },
+	{ "ZL", NULL, HidNpadButton_ZL, false },
 	{ "Y", NULL, HidNpadButton_Y, false },
 	{ "B", NULL, HidNpadButton_B, false },
 };
 
+static const char *TABS[SRC_COUNT];
+
 static struct {
 	Settings settings;
-	MediaListing list;
-	size_t selected;
-	size_t scroll;
+	/* Trending, or the last search. The other two sources belong to shelf.c. */
+	MediaListing fetched;
+	Source source;
+	/* A cursor per source: stepping over to the favourites and back should land
+	 * where it was, not at the top. */
+	size_t selected[SRC_COUNT];
+	size_t scroll[SRC_COUNT];
 	char query[MEDIA_SEARCH_MAX];
 	char note[NOTE_MAX];
 	int percent;
 	bool loaded;
 } pane;
 
+static const MediaListing *current_list(void) {
+	switch (pane.source) {
+		case SRC_HISTORY: return shelf_list(SHELF_HISTORY);
+		case SRC_FAVOURITES: return shelf_list(SHELF_FAVOURITES);
+		default: return &pane.fetched;
+	}
+}
+
+static const MediaItem *current_item(void) {
+	const MediaListing *list = current_list();
+	size_t at = pane.selected[pane.source];
+
+	return at < list->count ? &list->items[at] : NULL;
+}
+
+/* Pulls the cursor back inside a list that shrank underneath it -- a favourite
+ * dropped, say, or a source switched to while it was shorter. */
+static void clamp_cursor(void) {
+	size_t count = current_list()->count;
+
+	if (count == 0) {
+		pane.selected[pane.source] = 0;
+		pane.scroll[pane.source] = 0;
+		return;
+	}
+
+	if (pane.selected[pane.source] >= count) pane.selected[pane.source] = count - 1;
+
+	size_t row = pane.selected[pane.source] / UI_RESULT_COLS;
+	size_t first = pane.scroll[pane.source] / UI_RESULT_COLS;
+
+	if (row < first) first = row;
+	if (row >= first + UI_RESULT_ROWS) first = row - UI_RESULT_ROWS + 1;
+
+	pane.scroll[pane.source] = first * UI_RESULT_COLS;
+}
+
 void youtube_pane_open(void) {
 	if (pane.loaded) return;
 
 	settings_load(&pane.settings);
+	shelf_load();
 	pane.loaded = true;
 
 	/* Opening to an empty screen with a keyboard prompt asks the visitor to think
@@ -64,15 +118,16 @@ void youtube_pane_open(void) {
 	ui_message(T(STR_SEARCHING), NULL, NULL, 0);
 
 	char err[160];
-	if (!media_trending(&pane.settings, &pane.list, err, sizeof(err))) {
+	if (!media_trending(&pane.settings, &pane.fetched, err, sizeof(err))) {
 		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
 	}
 }
 
 void youtube_pane_exit(void) {
-	media_listing_free(&pane.list);
-	pane.selected = 0;
-	pane.scroll = 0;
+	media_listing_free(&pane.fetched);
+	shelf_exit();
+	memset(pane.selected, 0, sizeof(pane.selected));
+	memset(pane.scroll, 0, sizeof(pane.scroll));
 	pane.loaded = false;
 }
 
@@ -82,23 +137,21 @@ void youtube_pane_exit(void) {
  * out in space rather than in a line.
  */
 static void move_by(int delta) {
-	size_t count = pane.list.count;
+	size_t count = current_list()->count;
 	if (count == 0) return;
 
-	long target = (long)pane.selected + delta;
+	long target = (long)pane.selected[pane.source] + delta;
 	if (target < 0) target = 0;
 	if (target >= (long)count) target = (long)count - 1;
-	pane.selected = (size_t)target;
+	pane.selected[pane.source] = (size_t)target;
 
-	/* The window moves a whole row at a time, so the grid never shows half a row
-	 * of cards sliced by the top of the content area. */
-	size_t row = pane.selected / UI_RESULT_COLS;
-	size_t first = pane.scroll / UI_RESULT_COLS;
+	clamp_cursor();
+}
 
-	if (row < first) first = row;
-	if (row >= first + UI_RESULT_ROWS) first = row - UI_RESULT_ROWS + 1;
-
-	pane.scroll = first * UI_RESULT_COLS;
+static void switch_source(int delta) {
+	pane.source = (Source)(((int)pane.source + SRC_COUNT + delta) % SRC_COUNT);
+	pane.note[0] = '\0';
+	clamp_cursor();
 }
 
 /* --- searching ---------------------------------------------------------- */
@@ -117,14 +170,17 @@ static void search(void) {
 		return;
 	}
 
-	media_listing_free(&pane.list);
-	pane.list = found;
-	pane.selected = 0;
-	pane.scroll = 0;
+	media_listing_free(&pane.fetched);
+	pane.fetched = found;
+
+	/* Results belong to the browse tab, so searching from anywhere lands there. */
+	pane.source = SRC_BROWSE;
+	pane.selected[SRC_BROWSE] = 0;
+	pane.scroll[SRC_BROWSE] = 0;
 	pane.note[0] = '\0';
 }
 
-/* --- playing and saving -------------------------------------------------- */
+/* --- playing, saving, marking -------------------------------------------- */
 
 /* A live stream has no length and no finished file behind it, so the server can
  * neither merge it nor proxy it. Refusing here costs nothing; letting it through
@@ -136,12 +192,11 @@ static bool refuse_live(const MediaItem *item) {
 	return true;
 }
 
-/* Audio only, and instant. Worth its own button because a song does not need the
+/* Audio only, and quick. Worth its own button because a song does not need the
  * server to spend half a minute merging a picture nobody is going to look at. */
 static void listen_selected(void) {
-	if (pane.selected >= pane.list.count) return;
-	const MediaItem *item = &pane.list.items[pane.selected];
-	if (refuse_live(item)) return;
+	const MediaItem *item = current_item();
+	if (!item || refuse_live(item)) return;
 
 	/* Resolved first, then played. The proxy stays silent until yt-dlp has finished
 	 * with a cold video, which outlasts ffmpeg's own read timeout -- so asking the
@@ -161,6 +216,7 @@ static void listen_selected(void) {
 	}
 
 	pane.note[0] = '\0';
+	shelf_remember(item);
 	stage_begin(item->title);
 }
 
@@ -193,12 +249,11 @@ static bool on_progress(void *user, int64_t done, int64_t total) {
 }
 
 /* Streams the very file the save button would write, without writing it. The
- * server has to merge it first either way, so the wait is the same; what differs
- * is that nothing lands on the card. */
+ * server has to merge it first either way; what differs is that nothing lands on
+ * the card. */
 static void watch_selected(void) {
-	if (pane.selected >= pane.list.count) return;
-	const MediaItem *item = &pane.list.items[pane.selected];
-	if (refuse_live(item)) return;
+	const MediaItem *item = current_item();
+	if (!item || refuse_live(item)) return;
 
 	char url[640];
 	char err[160];
@@ -214,13 +269,13 @@ static void watch_selected(void) {
 	}
 
 	pane.note[0] = '\0';
+	shelf_remember(item);
 	stage_begin(item->title);
 }
 
 static void save_selected(void) {
-	if (pane.selected >= pane.list.count) return;
-	const MediaItem *item = &pane.list.items[pane.selected];
-	if (refuse_live(item)) return;
+	const MediaItem *item = current_item();
+	if (!item || refuse_live(item)) return;
 
 	if (!mkdir_p(SAVE_DIR)) {
 		snprintf(pane.note, sizeof(pane.note), "%s: %s", T(STR_SAVE_FAIL), SAVE_DIR);
@@ -238,6 +293,19 @@ static void save_selected(void) {
 	}
 }
 
+static void toggle_favourite(void) {
+	const MediaItem *item = current_item();
+	if (!item) return;
+
+	bool added = shelf_toggle_favourite(item);
+	snprintf(pane.note, sizeof(pane.note), "%s",
+			added ? T(STR_FAVOURITE_ADD) : T(STR_FAVOURITE_DROP));
+
+	/* Unmarking one while standing in the favourites shortens the list under the
+	 * cursor, so it has to be pulled back inside. */
+	clamp_cursor();
+}
+
 /* --- frame --------------------------------------------------------------- */
 
 bool youtube_pane_input(uint64_t down) {
@@ -245,8 +313,13 @@ bool youtube_pane_input(uint64_t down) {
 	if (down & HidNpadButton_Right) move_by(1);
 	if (down & HidNpadButton_Up) move_by(-UI_RESULT_COLS);
 	if (down & HidNpadButton_Down) move_by(UI_RESULT_COLS);
+
+	if (down & HidNpadButton_L) switch_source(-1);
+	if (down & HidNpadButton_R) switch_source(1);
+
 	if (down & HidNpadButton_A) watch_selected();
 	if (down & HidNpadButton_X) listen_selected();
+	if (down & HidNpadButton_ZL) toggle_favourite();
 	if (down & HidNpadButton_ZR) save_selected();
 	if (down & HidNpadButton_Y) search();
 	if (down & HidNpadButton_B) return false;
@@ -258,33 +331,46 @@ void youtube_pane_touch(int x, int y) {
 	int hit = ui_hit_result(x, y);
 	if (hit < 0) return;
 
-	size_t index = pane.scroll + (size_t)hit;
-	if (index >= pane.list.count) return;
+	size_t index = pane.scroll[pane.source] + (size_t)hit;
+	if (index >= current_list()->count) return;
 
-	pane.selected = index;
+	pane.selected[pane.source] = index;
 	watch_selected();
 }
 
 void youtube_pane_draw(uint64_t held) {
+	const MediaItem *item = current_item();
+
 	HINTS[0].label = T(STR_WATCH);
 	HINTS[1].label = T(STR_LISTEN);
-	HINTS[2].label = T(STR_SAVE);
+	HINTS[2].label = (item && shelf_is_favourite(item->id))
+			? T(STR_FAVOURITE_DROP)
+			: T(STR_FAVOURITES);
 	HINTS[3].label = T(STR_SEARCH);
 	HINTS[4].label = T(STR_BACK);
 
+	/* The browse tab wears the search term once there is one, so the strip says
+	 * what is actually on screen rather than a word that stopped being true. */
+	TABS[SRC_BROWSE] = pane.query[0] ? pane.query : T(STR_TRENDING);
+	TABS[SRC_HISTORY] = T(STR_HISTORY);
+	TABS[SRC_FAVOURITES] = T(STR_FAVOURITES);
+
+	const MediaListing *list = current_list();
+
 	char title[96];
-	if (pane.list.count > 0) {
-		snprintf(title, sizeof(title), "%s  (%zu)", T(STR_YT), pane.list.count);
+	if (list->count > 0) {
+		snprintf(title, sizeof(title), "%s  (%zu)", T(STR_YT), list->count);
 	} else {
 		snprintf(title, sizeof(title), "%s", T(STR_YT));
 	}
 
-	ui_header(T(STR_YT_EYEBROW), title, pane.note[0] ? pane.note : pane.query);
+	ui_header(T(STR_YT_EYEBROW), title, pane.note);
+	ui_result_tabs(TABS, SRC_COUNT, pane.source);
 
-	if (pane.list.count == 0) {
-		ui_empty(T(STR_YT_EMPTY));
+	if (list->count == 0) {
+		ui_empty(pane.source == SRC_BROWSE ? T(STR_YT_EMPTY) : T(STR_SHELF_EMPTY));
 	} else {
-		ui_results(&pane.list, pane.selected, pane.scroll);
+		ui_results(list, pane.selected[pane.source], pane.scroll[pane.source]);
 	}
 
 	ui_footer(HINTS, sizeof(HINTS) / sizeof(HINTS[0]), held);
