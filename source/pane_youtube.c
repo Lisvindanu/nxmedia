@@ -33,6 +33,8 @@
 
 #define SAVE_DIR "sdmc:/nxmedia"
 #define NOTE_MAX 192
+/* Comfortably past MEDIA_SEARCH_MAX, which is what the longest label can be. */
+#define LABEL_MAX 192
 
 /* Where the cards on screen come from. Browse holds whatever the server last
  * answered with; the other two answer from the card. */
@@ -52,6 +54,7 @@ static UiHint HINTS[] = {
 	{ "ZL", NULL, HidNpadButton_ZL, false },
 	{ "ZR", NULL, HidNpadButton_ZR, false },
 	{ "LR", NULL, HidNpadButton_L, false },
+	{ "-", NULL, HidNpadButton_Minus, false },
 	{ "Y", NULL, HidNpadButton_Y, false },
 	{ "B", NULL, HidNpadButton_B, false },
 };
@@ -68,6 +71,14 @@ static struct {
 	size_t selected[SRC_COUNT];
 	size_t scroll[SRC_COUNT];
 	char query[MEDIA_SEARCH_MAX];
+	/* What the browse tab is showing: trending, a search term, or a channel name.
+	 * Sized past the longest search term, so a label is never quietly cut. */
+	char browse_label[LABEL_MAX];
+	/* One step of history, so diving into a channel can be undone. Deeper than one
+	 * is not worth the memory: the tab strip already says where you are. */
+	MediaListing stashed;
+	char stashed_label[LABEL_MAX];
+	bool has_stash;
 	char note[NOTE_MAX];
 	int percent;
 	bool cancelled;
@@ -117,6 +128,7 @@ void youtube_pane_open(void) {
 	settings_load(&pane.settings);
 	shelf_load();
 	pane.loaded = true;
+	snprintf(pane.browse_label, sizeof(pane.browse_label), "%s", T(STR_TRENDING));
 
 	/* Opening to an empty screen with a keyboard prompt asks the visitor to think
 	 * of something before they have seen anything. What is popular now costs one
@@ -131,6 +143,8 @@ void youtube_pane_open(void) {
 
 void youtube_pane_exit(void) {
 	media_listing_free(&pane.fetched);
+	media_listing_free(&pane.stashed);
+	pane.has_stash = false;
 	shelf_exit();
 	memset(pane.selected, 0, sizeof(pane.selected));
 	memset(pane.scroll, 0, sizeof(pane.scroll));
@@ -178,6 +192,11 @@ static void search(void) {
 
 	media_listing_free(&pane.fetched);
 	pane.fetched = found;
+	snprintf(pane.browse_label, sizeof(pane.browse_label), "%s", pane.query);
+
+	/* A search is a fresh start, not a place to come back from. */
+	media_listing_free(&pane.stashed);
+	pane.has_stash = false;
 
 	/* Results belong to the browse tab, so searching from anywhere lands there. */
 	pane.source = SRC_BROWSE;
@@ -352,6 +371,71 @@ static void save_selected(void) {
 	}
 }
 
+/*
+ * Opens the channel behind the selected card. What was on the browse tab is kept
+ * aside so B can put it back -- diving into a channel is going somewhere, and
+ * going somewhere should be undoable.
+ */
+static void open_channel(void) {
+	const MediaItem *item = current_item();
+	if (!item) return;
+
+	if (!item->author_id) {
+		/* Entries YouTube credits to several parties name no single channel, and it
+		 * does not supply one anywhere else either. */
+		snprintf(pane.note, sizeof(pane.note), "%s", T(STR_NO_CHANNEL));
+		return;
+	}
+
+	ui_message(T(STR_SEARCHING), item->author ? item->author : T(STR_CHANNEL), NULL, 0);
+
+	MediaListing found = {0};
+	char name[LABEL_MAX] = {0};
+	char err[160];
+	if (!media_channel(&pane.settings, item->author_id, &found, name, sizeof(name),
+			err, sizeof(err))) {
+		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		return;
+	}
+
+	/* Only one step is kept, so a second dive replaces the first rather than
+	 * stacking: the list under it was itself a channel, and the tab says so. */
+	if (!pane.has_stash) {
+		pane.stashed = pane.fetched;
+		snprintf(pane.stashed_label, sizeof(pane.stashed_label), "%s", pane.browse_label);
+		pane.has_stash = true;
+	} else {
+		media_listing_free(&pane.fetched);
+	}
+
+	pane.fetched = found;
+	snprintf(pane.browse_label, sizeof(pane.browse_label), "%s",
+			name[0] ? name : (item->author ? item->author : T(STR_CHANNEL)));
+
+	pane.source = SRC_BROWSE;
+	pane.selected[SRC_BROWSE] = 0;
+	pane.scroll[SRC_BROWSE] = 0;
+	pane.note[0] = '\0';
+}
+
+/** Puts back what the channel replaced. False means there was nothing to go back to. */
+static bool leave_channel(void) {
+	if (!pane.has_stash) return false;
+
+	media_listing_free(&pane.fetched);
+	pane.fetched = pane.stashed;
+	pane.stashed = (MediaListing){0};
+	pane.has_stash = false;
+
+	snprintf(pane.browse_label, sizeof(pane.browse_label), "%s", pane.stashed_label);
+
+	pane.source = SRC_BROWSE;
+	pane.selected[SRC_BROWSE] = 0;
+	pane.scroll[SRC_BROWSE] = 0;
+	pane.note[0] = '\0';
+	return true;
+}
+
 static void toggle_favourite(void) {
 	const MediaItem *item = current_item();
 	if (!item) return;
@@ -380,8 +464,12 @@ bool youtube_pane_input(uint64_t down) {
 	if (down & HidNpadButton_X) listen_selected();
 	if (down & HidNpadButton_ZL) toggle_favourite();
 	if (down & HidNpadButton_ZR) save_selected();
+	if (down & HidNpadButton_Minus) open_channel();
 	if (down & HidNpadButton_Y) search();
-	if (down & HidNpadButton_B) return false;
+
+	/* B climbs out of a channel first, and only gives up the section once there is
+	 * nowhere left to climb -- the same way the card browser spends it. */
+	if (down & HidNpadButton_B) return leave_channel();
 
 	return true;
 }
@@ -407,12 +495,13 @@ void youtube_pane_draw(uint64_t held) {
 			: T(STR_FAVOURITES);
 	HINTS[3].label = T(STR_SAVE);
 	HINTS[4].label = T(STR_TAB);
-	HINTS[5].label = T(STR_SEARCH);
-	HINTS[6].label = T(STR_BACK);
+	HINTS[5].label = T(STR_CHANNEL);
+	HINTS[6].label = T(STR_SEARCH);
+	HINTS[7].label = T(STR_BACK);
 
-	/* The browse tab wears the search term once there is one, so the strip says
-	 * what is actually on screen rather than a word that stopped being true. */
-	TABS[SRC_BROWSE] = pane.query[0] ? pane.query : T(STR_TRENDING);
+	/* The browse tab wears whatever is actually in it -- trending, a search term, or
+	 * a channel's name -- rather than a word that stopped being true. */
+	TABS[SRC_BROWSE] = pane.browse_label;
 	TABS[SRC_HISTORY] = T(STR_HISTORY);
 	TABS[SRC_FAVOURITES] = T(STR_FAVOURITES);
 

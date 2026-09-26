@@ -30,6 +30,9 @@ typedef struct {
 	 */
 	char *filename;
 	char *author;
+	/* The channel behind it, for diving into. Null on entries YouTube attributes to
+	 * more than one party, where it names no single channel either. */
+	char *author_id;
 	/** Bytes, or 0 while the server has not merged the file and cannot know. */
 	int64_t size;
 	int64_t views;
@@ -49,6 +52,13 @@ void media_item_free(MediaItem *item);
  * there is something to look at before anyone has thought of a search term.
  */
 bool media_trending(const Settings *cfg, MediaListing *out, char *err, size_t err_len);
+
+/**
+ * What one channel has published. `name_out` receives the channel's own name, for
+ * saying where the list came from.
+ */
+bool media_channel(const Settings *cfg, const char *channel_id, MediaListing *out,
+		char *name_out, size_t name_len, char *err, size_t err_len);
 
 /** Searches YouTube through the server. Text is sent as typed. */
 bool media_search(const Settings *cfg, const char *text, MediaListing *out,

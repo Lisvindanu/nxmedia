@@ -15,6 +15,7 @@ void media_item_free(MediaItem *item) {
 	free(item->title);
 	free(item->filename);
 	free(item->author);
+	free(item->author_id);
 	*item = (MediaItem){0};
 }
 

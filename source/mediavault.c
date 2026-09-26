@@ -56,12 +56,14 @@ static bool read_item(json_object *node, MediaItem *out) {
 
 	const char *title = string_field(node, "title");
 	const char *author = string_field(node, "author");
+	const char *author_id = string_field(node, "authorId");
 
 	*out = (MediaItem){
 		.id = strdup(id),
 		.title = strdup(title ? title : filename),
 		.filename = strdup(filename),
 		.author = author ? strdup(author) : NULL,
+		.author_id = author_id ? strdup(author_id) : NULL,
 		.size = int_field(node, "size"),
 		.views = int_field(node, "viewCount"),
 		.duration = (int)int_field(node, "lengthSeconds"),
@@ -74,15 +76,15 @@ static bool read_item(json_object *node, MediaItem *out) {
 	return true;
 }
 
-/* Search and trending answer with the same envelope, so they share a reader. */
-static bool fetch_listing(const char *url, MediaListing *out, char *err, size_t err_len) {
+/*
+ * Search, trending and a channel's videos all answer with the same envelope, so
+ * they share a reader. Kept apart from the fetching because the channel body is
+ * also read a second time, for the channel's own name.
+ */
+static bool parse_listing(const char *text, MediaListing *out, char *err, size_t err_len) {
 	*out = (MediaListing){0};
 
-	HttpBuffer body = {0};
-	if (!http_get(url, NULL, &body, err, err_len)) return false;
-
-	json_object *root = json_tokener_parse(body.data ? body.data : "");
-	http_buffer_free(&body);
+	json_object *root = json_tokener_parse(text ? text : "");
 
 	json_object *data = NULL;
 	if (!root || !json_object_object_get_ex(root, "data", &data) ||
@@ -115,10 +117,58 @@ static bool fetch_listing(const char *url, MediaListing *out, char *err, size_t 
 	return true;
 }
 
+static bool fetch_listing(const char *url, MediaListing *out, char *err, size_t err_len) {
+	HttpBuffer body = {0};
+	if (!http_get(url, NULL, &body, err, err_len)) {
+		*out = (MediaListing){0};
+		return false;
+	}
+
+	bool ok = parse_listing(body.data, out, err, err_len);
+	http_buffer_free(&body);
+	return ok;
+}
+
 bool media_trending(const Settings *cfg, MediaListing *out, char *err, size_t err_len) {
 	char url[640];
 	snprintf(url, sizeof(url), "%s/trending", cfg->mediavault_url);
 	return fetch_listing(url, out, err, err_len);
+}
+
+bool media_channel(const Settings *cfg, const char *channel_id, MediaListing *out,
+		char *name_out, size_t name_len, char *err, size_t err_len) {
+	char *escaped = http_escape(channel_id);
+	if (!escaped) {
+		*out = (MediaListing){0};
+		set_err(err, err_len, "gagal menyusun URL channel");
+		return false;
+	}
+
+	char url[768];
+	snprintf(url, sizeof(url), "%s/channel/%s", cfg->mediavault_url, escaped);
+	http_free_escaped(escaped);
+
+	/* The name arrives beside the videos rather than in them, so it is read from a
+	 * second look at the same body. Cheap next to the request itself. */
+	HttpBuffer body = {0};
+	if (!http_get(url, NULL, &body, err, err_len)) {
+		*out = (MediaListing){0};
+		return false;
+	}
+
+	json_object *root = json_tokener_parse(body.data ? body.data : "");
+	if (root) {
+		json_object *channel = NULL;
+		if (json_object_object_get_ex(root, "channel", &channel)) {
+			const char *name = string_field(channel, "name");
+			if (name) snprintf(name_out, name_len, "%s", name);
+		}
+		json_object_put(root);
+	}
+
+	bool ok = parse_listing(body.data, out, err, err_len);
+	http_buffer_free(&body);
+	return ok;
 }
 
 bool media_search(const Settings *cfg, const char *text, MediaListing *out,
