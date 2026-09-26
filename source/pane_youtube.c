@@ -1,5 +1,6 @@
 #include "pane_youtube.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -85,6 +86,24 @@ static struct {
 	bool loaded;
 } pane;
 
+/*
+ * Sets the line the pane shows and writes the same words to the log.
+ *
+ * Kept as one call on purpose: a refusal that exists only on a screen nobody is
+ * recording cannot be diagnosed from anywhere else, and every time the two were
+ * written separately one of them was forgotten.
+ */
+static void note(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+static void note(const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf(pane.note, sizeof(pane.note), fmt, args);
+	va_end(args);
+
+	printf("[yt] %s\n", pane.note);
+}
+
 static const MediaListing *current_list(void) {
 	switch (pane.source) {
 		case SRC_HISTORY: return shelf_list(SHELF_HISTORY);
@@ -137,7 +156,7 @@ void youtube_pane_open(void) {
 
 	char err[160];
 	if (!media_trending(&pane.settings, &pane.fetched, err, sizeof(err))) {
-		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		note("%.150s", err);
 	}
 }
 
@@ -186,7 +205,7 @@ static void search(void) {
 	MediaListing found = {0};
 	char err[160];
 	if (!media_search(&pane.settings, pane.query, &found, err, sizeof(err))) {
-		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		note("%.150s", err);
 		return;
 	}
 
@@ -213,7 +232,7 @@ static void search(void) {
 static bool refuse_live(const MediaItem *item) {
 	if (item->duration > 0) return false;
 
-	snprintf(pane.note, sizeof(pane.note), "%s", T(STR_LIVE_NO_SUPPORT));
+	note("%s", T(STR_LIVE_NO_SUPPORT));
 	return true;
 }
 
@@ -231,12 +250,12 @@ static void listen_selected(void) {
 	char url[640];
 	char err[160];
 	if (!media_prepare_audio(&pane.settings, item, url, sizeof(url), err, sizeof(err))) {
-		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		note("%.150s", err);
 		return;
 	}
 
 	if (!player_play(url, NULL, err, sizeof(err))) {
-		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		note("%.150s", err);
 		return;
 	}
 
@@ -332,12 +351,12 @@ static void watch_selected(void) {
 	char url[640];
 	char err[160];
 	if (!media_prepare_stream(&pane.settings, item, url, sizeof(url), err, sizeof(err))) {
-		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		note("%.150s", err);
 		return;
 	}
 
 	if (!player_play(url, NULL, err, sizeof(err))) {
-		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		note("%.150s", err);
 		return;
 	}
 
@@ -351,7 +370,7 @@ static void save_selected(void) {
 	if (!item || refuse_live(item)) return;
 
 	if (!mkdir_p(SAVE_DIR)) {
-		snprintf(pane.note, sizeof(pane.note), "%s: %s", T(STR_SAVE_FAIL), SAVE_DIR);
+		note("%s: %s", T(STR_SAVE_FAIL), SAVE_DIR);
 		return;
 	}
 
@@ -361,13 +380,13 @@ static void save_selected(void) {
 	char err[160];
 	if (media_download(&pane.settings, item, SAVE_DIR, on_progress, NULL, on_waiting,
 			err, sizeof(err))) {
-		snprintf(pane.note, sizeof(pane.note), "%s: %.120s", T(STR_SAVED), item->filename);
+		note("%s: %.120s", T(STR_SAVED), item->filename);
 	} else if (pane.cancelled) {
 		/* The .part file stays behind, so pressing save again picks up where this
 		 * left off rather than starting the transfer over. */
-		snprintf(pane.note, sizeof(pane.note), "%s", T(STR_CANCELLED));
+		note("%s", T(STR_CANCELLED));
 	} else {
-		snprintf(pane.note, sizeof(pane.note), "%s: %.120s", T(STR_SAVE_FAIL), err);
+		note("%s: %.120s", T(STR_SAVE_FAIL), err);
 	}
 }
 
@@ -383,7 +402,7 @@ static void open_channel(void) {
 	if (!item->author_id) {
 		/* Entries YouTube credits to several parties name no single channel, and it
 		 * does not supply one anywhere else either. */
-		snprintf(pane.note, sizeof(pane.note), "%s", T(STR_NO_CHANNEL));
+		note("%s", T(STR_NO_CHANNEL));
 		return;
 	}
 
@@ -394,7 +413,7 @@ static void open_channel(void) {
 	char err[160];
 	if (!media_channel(&pane.settings, item->author_id, &found, name, sizeof(name),
 			err, sizeof(err))) {
-		snprintf(pane.note, sizeof(pane.note), "%.150s", err);
+		note("%.150s", err);
 		return;
 	}
 
@@ -441,7 +460,7 @@ static void toggle_favourite(void) {
 	if (!item) return;
 
 	bool added = shelf_toggle_favourite(item);
-	snprintf(pane.note, sizeof(pane.note), "%s",
+	note("%s",
 			added ? T(STR_FAVOURITE_ADD) : T(STR_FAVOURITE_DROP));
 
 	/* Unmarking one while standing in the favourites shortens the list under the

@@ -316,7 +316,14 @@ bool media_prepare_stream(const Settings *cfg, const MediaItem *item,
 	char url[640];
 	snprintf(url, sizeof(url), "%s/proxy/%s", cfg->mediavault_url, item->id);
 
-	if (!http_touch(url, WARM_TIMEOUT_SECONDS, err, err_len)) return false;
+	/* Printed before the wait, not after: when this is the last line in the log, the
+	 * warm-up is where it stopped, and the URL says which route was taken. */
+	printf("[media] memanaskan %s\n", url);
+
+	if (!http_touch(url, WARM_TIMEOUT_SECONDS, err, err_len)) {
+		printf("[media] pemanasan gagal: %s\n", err);
+		return false;
+	}
 
 	snprintf(url_out, url_len, "%s", url);
 	return true;
