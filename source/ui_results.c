@@ -23,17 +23,34 @@
  */
 
 #define THUMB_SLOTS 24
-#define THUMB_W 128
-#define THUMB_H 72
+
+/* Four across the content strip, two rows deep. Sized for a screen you look at
+ * from a sofa rather than a list you scan from a desk: eight big pictures beat
+ * five rows of small ones when the only pointer is a thumbstick. */
+#define COLS 4
+#define ROWS 2
+#define CARD_GAP 20
+#define CARD_W ((CONTENT_W - (COLS - 1) * CARD_GAP) / COLS)
+#define THUMB_W CARD_W
+#define THUMB_H (CARD_W * 9 / 16)
+#define CARD_TEXT_H 54
+#define CARD_H (THUMB_H + CARD_TEXT_H)
+#define CARD_ROW_GAP 24
+#define CARD_PITCH_Y (CARD_H + CARD_ROW_GAP)
+
+/* How far the focused card grows past its slot on every side. The pictures either
+ * side stay put, so the grown one reads as lifted rather than as a shifted grid. */
+#define FOCUS_GROW 8
+
+/* Decoded at the size the focused card draws it, not the size the others do, so
+ * growing one never stretches it past the pixels it actually has. The unfocused
+ * cards shrink it slightly instead, which is the direction that looks fine. */
+#define DECODE_W (THUMB_W + 2 * FOCUS_GROW)
+#define DECODE_H (THUMB_H + 2 * FOCUS_GROW)
 /* 320x180 and about twelve kilobytes. The 720p variant is twenty times the bytes
  * for a picture drawn at a seventh of the size. */
 #define THUMB_URL "https://i.ytimg.com/vi/%s/mqdefault.jpg"
 
-#define ROW_H 84
-#define ROW_GAP 6
-#define ROW_PITCH (ROW_H + ROW_GAP)
-
-static const SDL_Color COLOR_ROW_ON = { 0x2C, 0x34, 0x40, 0xFF };
 static const SDL_Color COLOR_SHADE = { 0x0A, 0x0D, 0x12, 0xC8 };
 
 typedef enum {
@@ -97,14 +114,14 @@ static uint8_t *decode_jpeg(const uint8_t *data, size_t len) {
 	 * other size, so keeping the full 320x180 would be seven times the memory for
 	 * a picture nobody sees. */
 	struct SwsContext *sws = sws_getContext(frame->width, frame->height,
-			(enum AVPixelFormat)frame->format, THUMB_W, THUMB_H, AV_PIX_FMT_RGBA,
+			(enum AVPixelFormat)frame->format, DECODE_W, DECODE_H, AV_PIX_FMT_RGBA,
 			SWS_BILINEAR, NULL, NULL, NULL);
 	if (!sws) goto done;
 
-	rgba = malloc((size_t)THUMB_W * THUMB_H * 4);
+	rgba = malloc((size_t)DECODE_W * DECODE_H * 4);
 	if (rgba) {
 		uint8_t *dst[4] = { rgba, NULL, NULL, NULL };
-		int stride[4] = { THUMB_W * 4, 0, 0, 0 };
+		int stride[4] = { DECODE_W * 4, 0, 0, 0 };
 		sws_scale(sws, (const uint8_t *const *)frame->data, frame->linesize, 0,
 				frame->height, dst, stride);
 	}
@@ -197,6 +214,11 @@ static void fetch_worker(void *arg) {
 void ui_thumbs_init(void) {
 	if (thumbs.started) return;
 
+	/* Photographs shrink badly under nearest sampling, and every card but the
+	 * focused one is shrunk. Set before any thumbnail texture exists, since the
+	 * hint is read at creation. */
+	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
+
 	mutexInit(&thumbs.lock);
 	condvarInit(&thumbs.wake);
 	thumbs.running = true;
@@ -253,9 +275,9 @@ static SDL_Texture *thumb_for(const char *id) {
 
 	if (slot->state == SLOT_DECODED) {
 		slot->texture = SDL_CreateTexture(ui_renderer, SDL_PIXELFORMAT_RGBA32,
-				SDL_TEXTUREACCESS_STATIC, THUMB_W, THUMB_H);
+				SDL_TEXTUREACCESS_STATIC, DECODE_W, DECODE_H);
 		if (slot->texture) {
-			SDL_UpdateTexture(slot->texture, NULL, slot->pixels, THUMB_W * 4);
+			SDL_UpdateTexture(slot->texture, NULL, slot->pixels, DECODE_W * 4);
 		}
 		free(slot->pixels);
 		slot->pixels = NULL;
@@ -283,69 +305,106 @@ static void format_duration(int seconds, char *out, size_t out_len) {
 	else snprintf(out, out_len, "%d:%02d", minutes, secs);
 }
 
-static void draw_thumb(const MediaItem *item, int x, int y) {
+/** Compact view count: the exact number is noise at a glance. */
+static void format_views(int64_t views, char *out, size_t out_len) {
+	if (views >= 1000000000) snprintf(out, out_len, "%.1fB", views / 1000000000.0);
+	else if (views >= 1000000) snprintf(out, out_len, "%.1fM", views / 1000000.0);
+	else if (views >= 1000) snprintf(out, out_len, "%.0fK", views / 1000.0);
+	else snprintf(out, out_len, "%lld", (long long)views);
+}
+
+static void draw_thumb(const MediaItem *item, int x, int y, int w, int h) {
 	SDL_Texture *texture = thumb_for(item->id);
 
 	if (!texture) {
-		ui_fill_round_rect(x, y, THUMB_W, THUMB_H, 6, COLOR_PANEL);
+		ui_fill_round_rect(x, y, w, h, 8, COLOR_PANEL);
 		/* A play triangle rather than a spinner: it says "video" while it waits and
 		 * needs no frame clock to look right. */
-		int cx = x + THUMB_W / 2 - 4;
-		int cy = y + THUMB_H / 2;
-		for (int i = 0; i < 10; i++) ui_fill_rect(cx + i, cy - 9 + i, 1, 18 - 2 * i, COLOR_RULE);
+		int cx = x + w / 2 - 6;
+		int cy = y + h / 2;
+		for (int i = 0; i < 14; i++) ui_fill_rect(cx + i, cy - 13 + i, 1, 26 - 2 * i, COLOR_RULE);
 		return;
 	}
 
-	SDL_Rect dst = { x, y, THUMB_W, THUMB_H };
+	SDL_Rect dst = { x, y, w, h };
 	SDL_RenderCopy(ui_renderer, texture, NULL, &dst);
 
 	char time[16];
 	format_duration(item->duration, time, sizeof(time));
 
-	int badge_w = ui_measure_text(FONT_SMALL, time) + 12;
-	int badge_x = x + THUMB_W - badge_w - 5;
-	int badge_y = y + THUMB_H - 21;
+	int badge_w = ui_measure_text(FONT_SMALL, time) + 14;
+	int badge_x = x + w - badge_w - 8;
+	int badge_y = y + h - 26;
 
-	ui_fill_round_rect(badge_x, badge_y, badge_w, 16, 3, COLOR_SHADE);
-	ui_draw_text(badge_x + 6, badge_y + 8, FONT_SMALL, COLOR_TEXT, time, badge_w);
+	ui_fill_round_rect(badge_x, badge_y, badge_w, 20, 4, COLOR_SHADE);
+	ui_draw_text(badge_x + 7, badge_y + 10, FONT_SMALL, COLOR_TEXT, time, badge_w);
 }
 
-static void draw_row(const MediaItem *item, int y, bool selected) {
-	ui_fill_round_rect(CONTENT_X, y, CONTENT_W, ROW_H, 10,
-			selected ? COLOR_ROW_ON : COLOR_ROW);
+static void draw_card(const MediaItem *item, int x, int y, bool focused) {
+	int tx = x, ty = y, tw = THUMB_W, th = THUMB_H;
 
-	/* A bar down the selected edge, so which row is live survives being read from
-	 * across a room where a slightly lighter panel would not. */
-	if (selected) ui_fill_round_rect(CONTENT_X, y + 10, 4, ROW_H - 20, 2, COLOR_ACCENT);
+	if (focused) {
+		/* Grown outwards from its own slot rather than pushing the others along, so
+		 * the grid stays where the eye left it. */
+		tx -= FOCUS_GROW;
+		ty -= FOCUS_GROW;
+		tw += 2 * FOCUS_GROW;
+		th += 2 * FOCUS_GROW;
+		ui_fill_round_rect(tx - 3, ty - 3, tw + 6, th + 6, 10, COLOR_ACCENT);
+	}
 
-	draw_thumb(item, CONTENT_X + 12, y + (ROW_H - THUMB_H) / 2);
+	draw_thumb(item, tx, ty, tw, th);
 
-	int text_x = CONTENT_X + 12 + THUMB_W + 18;
-	int text_w = CONTENT_RIGHT - text_x - 16;
+	/* The words stay on the slot's grid line even when the picture above them has
+	 * grown, or the whole row would appear to jump as the cursor moves along it. */
+	int text_y = y + THUMB_H + 18;
+	ui_draw_text(x, text_y, FONT_ROW, focused ? COLOR_TEXT : COLOR_DIM,
+			item->title, CARD_W);
 
-	ui_draw_text(text_x, y + 32, FONT_ROW, COLOR_TEXT, item->title, text_w);
-	ui_draw_text(text_x, y + 58, FONT_SMALL, COLOR_DIM,
-			item->author ? item->author : "YouTube", text_w);
+	char meta[224];
+	char views[24];
+	if (item->views > 0) {
+		format_views(item->views, views, sizeof(views));
+		snprintf(meta, sizeof(meta), "%s  ·  %s", views, item->author ? item->author : "YouTube");
+	} else {
+		snprintf(meta, sizeof(meta), "%s", item->author ? item->author : "YouTube");
+	}
+
+	ui_draw_text(x, text_y + 26, FONT_SMALL, COLOR_DIM, meta, CARD_W);
+}
+
+static void card_origin(size_t cell, int *x, int *y) {
+	*x = CONTENT_X + (int)(cell % COLS) * (CARD_W + CARD_GAP);
+	*y = LIST_TOP + (int)(cell / COLS) * CARD_PITCH_Y;
 }
 
 void ui_results(const MediaListing *listing, size_t selected, size_t scroll) {
-	for (size_t row = 0; row < UI_RESULT_ROWS; row++) {
-		size_t index = scroll + row;
+	for (size_t cell = 0; cell < UI_RESULT_ROWS * COLS; cell++) {
+		size_t index = scroll + cell;
 		if (index >= listing->count) break;
 
-		draw_row(&listing->items[index], LIST_TOP + (int)row * ROW_PITCH, index == selected);
+		int x, y;
+		card_origin(cell, &x, &y);
+
+		/* The focused card is drawn last so its grown picture and ring sit over its
+		 * neighbours rather than under them. */
+		if (index != selected) draw_card(&listing->items[index], x, y, false);
+	}
+
+	if (selected >= scroll && selected < scroll + UI_RESULT_ROWS * COLS &&
+			selected < listing->count) {
+		int x, y;
+		card_origin(selected - scroll, &x, &y);
+		draw_card(&listing->items[selected], x, y, true);
 	}
 }
 
 int ui_hit_result(int x, int y) {
-	if (x < CONTENT_X || x > CONTENT_RIGHT) return -1;
+	for (size_t cell = 0; cell < UI_RESULT_ROWS * COLS; cell++) {
+		int cx, cy;
+		card_origin(cell, &cx, &cy);
 
-	int offset = y - LIST_TOP;
-	if (offset < 0) return -1;
-
-	/* A tap in the gap between two rows belongs to neither. */
-	if (offset % ROW_PITCH > ROW_H) return -1;
-
-	int row = offset / ROW_PITCH;
-	return row < (int)UI_RESULT_ROWS ? row : -1;
+		if (x >= cx && x < cx + CARD_W && y >= cy && y < cy + CARD_H) return (int)cell;
+	}
+	return -1;
 }

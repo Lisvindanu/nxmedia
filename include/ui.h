@@ -97,9 +97,11 @@ void ui_rows(const UiRow *rows, size_t count, size_t selected, size_t total, siz
 /** Stands in for a list with nothing in it, so the screen is never simply blank. */
 void ui_empty(const char *label);
 
-/* Search results are their own shape: a picture, two lines of text, and far
- * taller than a plain row, so only five fit. */
-#define UI_RESULT_ROWS 5
+/* Results are cards in a grid, four across, and this is how many rows of them
+ * are on screen -- so the pane can page by UI_RESULT_ROWS * 4. */
+#define UI_RESULT_ROWS 2
+#define UI_RESULT_COLS 4
+#define UI_RESULT_CELLS (UI_RESULT_ROWS * UI_RESULT_COLS)
 void ui_results(const MediaListing *listing, size_t selected, size_t scroll);
 
 /** Visible result under the point, or -1. Rows here are not the shared size. */

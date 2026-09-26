@@ -32,6 +32,7 @@ typedef struct {
 	char *author;
 	/** Bytes, or 0 while the server has not merged the file and cannot know. */
 	int64_t size;
+	int64_t views;
 	int duration;
 } MediaItem;
 

@@ -72,6 +72,7 @@ static bool read_item(json_object *node, MediaItem *out) {
 		.filename = strdup(filename),
 		.author = author ? strdup(author) : NULL,
 		.size = int_field(node, "size"),
+		.views = int_field(node, "viewCount"),
 		.duration = (int)int_field(node, "lengthSeconds"),
 	};
 

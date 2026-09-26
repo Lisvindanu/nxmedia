@@ -76,16 +76,29 @@ void youtube_pane_exit(void) {
 	pane.loaded = false;
 }
 
-static void move(int delta) {
+/*
+ * Steps the cursor through the grid. Clamped rather than wrapped: running off the
+ * bottom row and reappearing at the top is disorienting when the cards are laid
+ * out in space rather than in a line.
+ */
+static void move_by(int delta) {
 	size_t count = pane.list.count;
 	if (count == 0) return;
 
-	pane.selected = (pane.selected + count + (size_t)delta) % count;
+	long target = (long)pane.selected + delta;
+	if (target < 0) target = 0;
+	if (target >= (long)count) target = (long)count - 1;
+	pane.selected = (size_t)target;
 
-	if (pane.selected < pane.scroll) pane.scroll = pane.selected;
-	if (pane.selected >= pane.scroll + UI_RESULT_ROWS) {
-		pane.scroll = pane.selected - UI_RESULT_ROWS + 1;
-	}
+	/* The window moves a whole row at a time, so the grid never shows half a row
+	 * of cards sliced by the top of the content area. */
+	size_t row = pane.selected / UI_RESULT_COLS;
+	size_t first = pane.scroll / UI_RESULT_COLS;
+
+	if (row < first) first = row;
+	if (row >= first + UI_RESULT_ROWS) first = row - UI_RESULT_ROWS + 1;
+
+	pane.scroll = first * UI_RESULT_COLS;
 }
 
 /* --- searching ---------------------------------------------------------- */
@@ -215,8 +228,10 @@ static void save_selected(void) {
 /* --- frame --------------------------------------------------------------- */
 
 bool youtube_pane_input(uint64_t down) {
-	if (down & HidNpadButton_Down) move(1);
-	if (down & HidNpadButton_Up) move(-1);
+	if (down & HidNpadButton_Left) move_by(-1);
+	if (down & HidNpadButton_Right) move_by(1);
+	if (down & HidNpadButton_Up) move_by(-UI_RESULT_COLS);
+	if (down & HidNpadButton_Down) move_by(UI_RESULT_COLS);
 	if (down & HidNpadButton_A) watch_selected();
 	if (down & HidNpadButton_X) listen_selected();
 	if (down & HidNpadButton_ZR) save_selected();
