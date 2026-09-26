@@ -43,10 +43,15 @@ typedef enum {
 	SRC_COUNT,
 } Source;
 
+/* Every action the pane has, all of them named. A button nobody can see is a
+ * button nobody presses: leaving save off this bar is how it came to look as
+ * though the feature had never been built. */
 static UiHint HINTS[] = {
 	{ "A", NULL, HidNpadButton_A, true },
 	{ "X", NULL, HidNpadButton_X, false },
 	{ "ZL", NULL, HidNpadButton_ZL, false },
+	{ "ZR", NULL, HidNpadButton_ZR, false },
+	{ "LR", NULL, HidNpadButton_L, false },
 	{ "Y", NULL, HidNpadButton_Y, false },
 	{ "B", NULL, HidNpadButton_B, false },
 };
@@ -344,10 +349,12 @@ void youtube_pane_draw(uint64_t held) {
 	HINTS[0].label = T(STR_WATCH);
 	HINTS[1].label = T(STR_LISTEN);
 	HINTS[2].label = (item && shelf_is_favourite(item->id))
-			? T(STR_FAVOURITE_DROP)
+			? T(STR_UNFAVOURITE)
 			: T(STR_FAVOURITES);
-	HINTS[3].label = T(STR_SEARCH);
-	HINTS[4].label = T(STR_BACK);
+	HINTS[3].label = T(STR_SAVE);
+	HINTS[4].label = T(STR_TAB);
+	HINTS[5].label = T(STR_SEARCH);
+	HINTS[6].label = T(STR_BACK);
 
 	/* The browse tab wears the search term once there is one, so the strip says
 	 * what is actually on screen rather than a word that stopped being true. */
