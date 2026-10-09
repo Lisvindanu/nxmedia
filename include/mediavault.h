@@ -37,6 +37,14 @@ typedef struct {
 	int64_t size;
 	int64_t views;
 	int duration;
+	/**
+	 * Seconds into the video when it was last left, or 0.
+	 *
+	 * Only ever set by the card's own lists; nothing the server answers with knows
+	 * where anybody stopped. An item straight off a search therefore starts at the
+	 * beginning, which is what it should do.
+	 */
+	int position;
 } MediaItem;
 
 typedef struct {

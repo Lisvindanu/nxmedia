@@ -20,6 +20,15 @@
 typedef enum {
 	SHELF_HISTORY,
 	SHELF_FAVOURITES,
+	/**
+	 * What has been downloaded to the card.
+	 *
+	 * The card already holds the files, but only under the names the server gave
+	 * them -- transliterated, with an id glued on. This keeps the title, the author
+	 * and the id beside each one, which is the difference between a list you can
+	 * read and a folder you have to search.
+	 */
+	SHELF_SAVED,
 	SHELF_COUNT,
 } ShelfKind;
 
@@ -41,3 +50,19 @@ void shelf_remember(const MediaItem *item);
 bool shelf_toggle_favourite(const MediaItem *item);
 
 bool shelf_is_favourite(const char *id);
+
+/** Notes that this now exists on the card. Replacing an entry keeps it in place. */
+void shelf_remember_saved(const MediaItem *item);
+
+/** Seconds into `id` when it was last left, or 0 if it was never left part-way. */
+int shelf_position(const char *id);
+
+/**
+ * Records how far into `id` playback had reached.
+ *
+ * Deliberately does not reorder the history: this is called while watching, and
+ * moving the entry every minute would make the list shuffle under the cursor of
+ * someone browsing it. A position close enough to the end is stored as zero, so
+ * something watched through starts over rather than resuming at its credits.
+ */
+void shelf_remember_position(const char *id, int seconds);

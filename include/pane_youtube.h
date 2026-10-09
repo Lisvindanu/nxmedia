@@ -11,6 +11,7 @@
 /** Fetches what is trending the first time the pane is entered, then keeps it. */
 void youtube_pane_open(void);
 
+
 void youtube_pane_exit(void);
 
 /** Handles this frame's presses. False means B went unused: leave the section. */

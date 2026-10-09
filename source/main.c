@@ -7,6 +7,7 @@
 #include "http.h"
 #include "i18n.h"
 #include "pane_media.h"
+#include "pane_music.h"
 #include "pane_video.h"
 #include "player.h"
 #include "power.h"
@@ -132,7 +133,6 @@ typedef struct {
 	bool gliding;
 	size_t station;
 	/** The card browser behind the Music tile. Video keeps its own, inside its pane. */
-	MediaPane music;
 	size_t setting;
 	UpdateInfo update;
 	/* What the Update row reads right now: a stage, an error, or a new version. */
@@ -210,7 +210,7 @@ static void draw(App *app) {
 
 		ui_footer(HINT_RADIO, COUNT_OF(HINT_RADIO), app->held);
 	} else if (app->section == SECTION_MUSIC) {
-		media_pane_draw(&app->music, T(STR_MUSIC_EYEBROW), app->held);
+		music_pane_draw(app->held);
 	} else if (app->section == SECTION_YOUTUBE) {
 		youtube_pane_draw(app->held);
 	} else if (app->section == SECTION_VIDEO) {
@@ -362,6 +362,64 @@ static void step_station(App *app, int delta) {
 	refresh_status(app);
 }
 
+/*
+ * Held directions repeat, and the stick counts as the D-pad.
+ *
+ * Both are fixed here rather than in each pane so that one place decides what "up"
+ * means. Before this, no pane looked at the stick at all -- it simply did not
+ * navigate anything -- and nothing repeated, so a list of three hundred songs had
+ * to be walked one press at a time.
+ *
+ * 200ms before the first repeat and 40ms between them after: slow enough that one
+ * press stays one press, fast enough to cross a long list without thinking about it.
+ */
+#define REPEAT_DELAY_MS 200
+#define REPEAT_RATE_MS 40
+
+/*
+ * Only up and down repeat.
+ *
+ * Left and right are a seek on the two transport screens, and ten seconds every
+ * forty milliseconds would throw the playhead minutes away from where the thumb
+ * meant to put it. Across a four-wide grid single presses are no hardship.
+ */
+#define REPEAT_MASK (HidNpadButton_Up | HidNpadButton_Down)
+
+static uint64_t fold_sticks(uint64_t mask) {
+	uint64_t out = mask;
+
+	/* The Any* masks are libnx's own, so the stick's threshold is Nintendo's rather
+	 * than a deadzone we picked. */
+	if (mask & HidNpadButton_AnyUp) out |= HidNpadButton_Up;
+	if (mask & HidNpadButton_AnyDown) out |= HidNpadButton_Down;
+	if (mask & HidNpadButton_AnyLeft) out |= HidNpadButton_Left;
+	if (mask & HidNpadButton_AnyRight) out |= HidNpadButton_Right;
+
+	return out;
+}
+
+/** The directions a held press should fire again this frame, or none. */
+static uint64_t repeat_fire(uint64_t held) {
+	static uint64_t armed;
+	static u64 next_at;
+
+	uint64_t dirs = held & REPEAT_MASK;
+	u64 now = armTicksToNs(armGetSystemTick()) / 1000000ULL;
+
+	/* A change in which directions are held restarts the wait, so rolling the stick
+	 * from one direction to another does not inherit the previous one's rate. */
+	if (dirs != armed) {
+		armed = dirs;
+		next_at = now + REPEAT_DELAY_MS;
+		return 0;
+	}
+
+	if (!dirs || now < next_at) return 0;
+
+	next_at = now + REPEAT_RATE_MS;
+	return dirs;
+}
+
 int main(int argc, char **argv) {
 	char err[256] = {0};
 
@@ -444,11 +502,16 @@ int main(int argc, char **argv) {
 
 	while (appletMainLoop()) {
 		padUpdate(&pad);
-		uint64_t down = padGetButtonsDown(&pad);
+		uint64_t down = fold_sticks(padGetButtonsDown(&pad));
 
 		/* The hint bar lights the button being held, so a change in the mask is a
 		 * change on screen even when nothing else moved. */
-		uint64_t held = padGetButtons(&pad);
+		uint64_t held = fold_sticks(padGetButtons(&pad));
+
+		/* A repeat is indistinguishable from a press from here on, which is what
+		 * lets every pane get it without being told. */
+		down |= repeat_fire(held);
+
 		if (held != app.held) {
 			app.held = held;
 			app.dirty = true;
@@ -487,7 +550,7 @@ int main(int argc, char **argv) {
 					app.dirty = true;
 				}
 			} else if (app.section == SECTION_MUSIC) {
-				media_pane_touch(&app.music, touch.x, touch.y);
+				music_pane_touch(touch.x, touch.y);
 				app.dirty = true;
 			} else if (app.section == SECTION_YOUTUBE) {
 				youtube_pane_touch(touch.x, touch.y);
@@ -530,7 +593,7 @@ int main(int argc, char **argv) {
 			if (down & HidNpadButton_Down) app.section = HOME_DOWN[app.section];
 			if (down & HidNpadButton_A) {
 				app.home = false;
-				if (app.section == SECTION_MUSIC) media_pane_open(&app.music, LibraryKind_Audio);
+				if (app.section == SECTION_MUSIC) music_pane_open();
 				if (app.section == SECTION_YOUTUBE) youtube_pane_open();
 				if (app.section == SECTION_VIDEO) video_pane_open();
 			}
@@ -538,7 +601,7 @@ int main(int argc, char **argv) {
 		} else if (app.section == SECTION_MUSIC) {
 			/* B walks back up the card first and only gives up the section once it is
 			 * standing at the root. */
-			if (!media_pane_input(&app.music, down)) app.home = true;
+			if (!music_pane_input(down)) app.home = true;
 			if (down) app.dirty = true;
 		} else if (app.section == SECTION_YOUTUBE) {
 			if (!youtube_pane_input(down)) app.home = true;
@@ -638,6 +701,9 @@ int main(int argc, char **argv) {
 		/* A moving picture has to be pushed frame after frame, so it overrides the
 		 * loop's usual rule of only drawing when something was pressed. */
 		if (stage_animating()) app.dirty = true;
+		if (app.section == SECTION_MUSIC && !app.home && music_pane_animating()) {
+			app.dirty = true;
+		}
 
 		if (app.dirty && !power_is_screen_off()) {
 			draw(&app);
@@ -651,7 +717,7 @@ int main(int argc, char **argv) {
 	player_exit();
 	youtube_pane_exit();
 	video_pane_exit();
-	media_pane_exit(&app.music);
+	music_pane_exit();
 	radio_free();
 	ui_thumbs_exit();
 	http_exit();

@@ -115,6 +115,94 @@ int ui_hit_result(int x, int y);
 void ui_thumbs_init(void);
 void ui_thumbs_exit(void);
 
+/* ------------------------------------------------------------------- music */
+
+/** One line of a track list: what a song is picked by, which is its name. */
+typedef struct {
+	/**
+	 * Video id, for the row's cover. NULL draws the generated placeholder instead.
+	 *
+	 * A row with a picture on it is the difference between a track list and a list
+	 * of filenames; every music app of the last decade leads its rows with the
+	 * cover, and a number is only ever ordering nobody reads.
+	 */
+	const char *id;
+	const char *title;
+	const char *artist;
+	/** Pre-formatted duration, right-aligned. Empty for something with no length. */
+	const char *length;
+} UiTrack;
+
+/**
+ * Everything the two music surfaces draw. One struct for both, because the strip
+ * is the same information as the full screen with less room to say it in.
+ */
+typedef struct {
+	/** Video id, for the album art. NULL falls back to the generated placeholder. */
+	const char *id;
+	const char *title;
+	const char *artist;
+	/** A third line: album, or where this is playing from. */
+	const char *detail;
+	/** Playing, paused, connecting -- the word, already translated. */
+	const char *state;
+	/** What follows this one, or NULL when nothing does. */
+	const char *next;
+	/** Shown by the strip when nothing is playing at all. */
+	const char *idle_label;
+	double position;
+	/** Seconds, or <= 0 for a source with no end. No bar is drawn for those. */
+	double duration;
+	/** How much is buffered ahead, 0 to 1, or negative when unknown. */
+	double buffered;
+	bool paused;
+	bool shuffle;
+	bool repeat;
+	/* Already translated, because the chip is drawn here but worded by the caller. */
+	const char *shuffle_label;
+	const char *repeat_label;
+} UiNowPlaying;
+
+size_t ui_tracks_visible(void);
+
+/** One screenful of tracks. `scroll` only numbers the rows and sizes the indicator. */
+void ui_tracks(const UiTrack *tracks, size_t count, size_t selected, size_t scroll,
+		size_t total);
+
+/** Visible track row under the point, or -1. */
+int ui_hit_track(int x, int y);
+
+/**
+ * What is playing, as one piece of album art in the header's corner.
+ *
+ * Draws nothing when nothing is playing. A strip across the bottom was the obvious
+ * alternative and it cost 84px of list to repeat what the full screen says better.
+ */
+void ui_now_corner(const UiNowPlaying *now);
+
+/** Whether the point is on that art, which is how a tap opens the full screen. */
+bool ui_hit_now_corner(int x, int y);
+
+/** The whole content band given over to what is playing. */
+void ui_now_playing(const UiNowPlaying *now);
+
+/** Where a finger has to land to move the playhead on the full screen. */
+UiRect ui_music_scrub(void);
+
+/** Transport control under the point: 0 back, 1 play/pause, 2 forward, or -1. */
+int ui_hit_transport(int x, int y);
+
+/** State chip under the point: 0 shuffle, 1 repeat, or -1. */
+int ui_hit_music_chip(int x, int y);
+
+/**
+ * Square album art for a video id, cropped from the cached thumbnail.
+ *
+ * With nothing cached yet it paints a deterministic gradient from the id and the
+ * title's first character, rather than a grey hole that looks like a bug.
+ */
+void ui_art(const char *id, const char *title, UiRect box);
+
 /** Byte count in the largest unit that leaves a number worth reading. */
 void ui_format_size(int64_t bytes, char *out, size_t len);
 

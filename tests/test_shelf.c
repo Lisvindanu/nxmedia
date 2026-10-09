@@ -98,6 +98,46 @@ int main(void) {
 	check("durasi ikut tersimpan", kept->duration == 300);
 	check("jumlah tayangan ikut tersimpan", kept->views == 1234);
 
+	printf("\n-- posisi tontonan --\n");
+	/* A long video, so the floor and the tail are far apart and each can be tested
+	 * without the other interfering. */
+	MediaItem c = sample("ccc", "Film Panjang", 3600);
+	shelf_remember(&c);
+
+	check("awalnya tidak ada posisi", shelf_position("ccc") == 0);
+
+	/* Under the floor there is nothing worth returning to, so it is stored as a
+	 * fresh start rather than as four seconds in. */
+	shelf_remember_position("ccc", 4);
+	check("di bawah 30s dianggap dari awal", shelf_position("ccc") == 0);
+
+	shelf_remember_position("ccc", 754);
+	check("posisi tersimpan", shelf_position("ccc") == 754);
+
+	/* Inside the last fifteen seconds counts as watched through. */
+	shelf_remember_position("ccc", 3590);
+	check("di ekor dianggap tamat", shelf_position("ccc") == 0);
+
+	shelf_remember_position("ccc", 754);
+	shelf_remember_position("ccc", -5);
+	check("angka negatif tidak merusak", shelf_position("ccc") == 0);
+
+	shelf_remember_position("ccc", 900);
+	check("id yang tidak ada diabaikan", (shelf_remember_position("zzz", 100), true));
+	check("posisi id lain tidak tersentuh", shelf_position("ccc") == 900);
+
+	/* The bug this guards: recording a play replaces the entry, and the position
+	 * lives only in the entry being replaced. */
+	shelf_remember(&c);
+	check("diputar ulang tidak menghapus posisi", shelf_position("ccc") == 900);
+	check("diputar ulang tetap pindah ke depan", strcmp(first_id(SHELF_HISTORY), "ccc") == 0);
+
+	shelf_exit();
+	shelf_load();
+	check("posisi bertahan setelah ditutup", shelf_position("ccc") == 900);
+
+	free_sample(&c);
+
 	free_sample(&a);
 	free_sample(&b);
 	shelf_exit();

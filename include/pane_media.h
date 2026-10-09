@@ -20,6 +20,13 @@ typedef struct {
 	LibraryListing listing;
 	size_t selected;
 	size_t scroll;
+
+	/*
+	 * A search replaces what the list shows without touching `dir`, so leaving the
+	 * results puts the browser back in the folder it was in.
+	 */
+	bool searching;
+	char query[96];
 	/** What is playing, for the header to keep naming after the list has moved on. */
 	char title[128];
 	/** Whatever went wrong last, shown in place of the hint line. */

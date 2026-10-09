@@ -61,8 +61,12 @@ static void draw_soon_badge(UiRect r) {
 static void draw_tile(UiRect r, const UiTile *item, bool active, bool hero) {
 	/* The ring is drawn as a slightly larger tile behind, which is the only way to
 	 * get an outline out of a fill-only primitive. */
-	if (active) ui_fill_round_rect(r.x - 3, r.y - 3, r.w + 6, r.h + 6, TILE_RADIUS + 3, COLOR_ACCENT);
-	ui_fill_round_rect(r.x, r.y, r.w, r.h, TILE_RADIUS, active ? COLOR_ROW : COLOR_PANEL);
+	if (active) {
+		ui_fill_round_rect(r.x - 3, r.y - 3, r.w + 6, r.h + 6, TILE_RADIUS + 3, COLOR_ACCENT);
+		ui_fill_round_rect(r.x, r.y, r.w, r.h, TILE_RADIUS, COLOR_ROW);
+	} else {
+		ui_panel(r.x, r.y, r.w, r.h, TILE_RADIUS);
+	}
 
 	if (!item->ready) draw_soon_badge(r);
 

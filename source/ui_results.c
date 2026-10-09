@@ -37,15 +37,17 @@
 #define CARD_TEXT_H 54
 #define CARD_H (THUMB_H + CARD_TEXT_H)
 #define CARD_ROW_GAP 24
+/* Thin enough to read as a mark on the picture rather than as part of the card. */
+#define PROGRESS_H 4
 #define CARD_PITCH_Y (CARD_H + CARD_ROW_GAP)
 
 /* How far the focused card grows past its slot on every side. The pictures either
  * side stay put, so the grown one reads as lifted rather than as a shifted grid. */
 #define FOCUS_GROW 8
 
-/* The header rule sits at 136 and the grid starts at 164, which leaves exactly
- * enough room for a row of pills without taking any from the cards. */
-#define TAB_Y 140
+/* In the gap the header rule already leaves above the grid, so the strip costs the
+ * cards no height. Follows the rule rather than repeating its number. */
+#define TAB_Y (HEADER_RULE_Y + 4)
 #define TAB_H 22
 
 /* Decoded at the size the focused card draws it, not the size the others do, so
@@ -76,6 +78,15 @@ typedef struct {
 	uint8_t *pixels;
 	SDL_Texture *texture;
 	uint64_t touched;
+	/*
+	 * The cover's average colour, kept because the pixels are not.
+	 *
+	 * Computed on the fetch thread while the buffer is still in hand -- it is freed
+	 * as soon as the texture exists, and reading it back out of a texture would mean
+	 * a round trip from the GPU for three bytes.
+	 */
+	SDL_Color tint;
+	bool has_tint;
 } ThumbSlot;
 
 static struct {
@@ -138,6 +149,29 @@ done:
 	av_packet_free(&packet);
 	avcodec_free_context(&ctx);
 	return rgba;
+}
+
+/*
+ * The average colour of a decoded cover.
+ *
+ * An average rather than a dominant-colour search: a histogram of a 289x178 picture
+ * costs more than it buys here, because the hue is all that survives -- saturation
+ * and lightness are forced to fixed values when the background is drawn, so that a
+ * pale cover and a dark one give equally readable results. Every fourth pixel is
+ * enough for a hue.
+ */
+static SDL_Color average_colour(const uint8_t *rgba) {
+	uint64_t r = 0, g = 0, b = 0, n = 0;
+
+	for (int i = 0; i < DECODE_W * DECODE_H; i += 4) {
+		r += rgba[i * 4 + 0];
+		g += rgba[i * 4 + 1];
+		b += rgba[i * 4 + 2];
+		n++;
+	}
+
+	if (n == 0) return (SDL_Color){ 0x80, 0x80, 0x80, 0xFF };
+	return (SDL_Color){ (Uint8)(r / n), (Uint8)(g / n), (Uint8)(b / n), 0xFF };
 }
 
 /* ------------------------------------------------------------------ fetching */
@@ -209,6 +243,10 @@ static void fetch_worker(void *arg) {
 		 * which case these pixels belong to nobody. */
 		if (slot->state == SLOT_FETCHING && strcmp(slot->id, id) == 0) {
 			slot->pixels = pixels;
+			if (pixels) {
+				slot->tint = average_colour(pixels);
+				slot->has_tint = true;
+			}
 			slot->state = pixels ? SLOT_DECODED : SLOT_FAILED;
 		} else {
 			free(pixels);
@@ -295,6 +333,92 @@ static SDL_Texture *thumb_for(const char *id) {
 	return texture;
 }
 
+/*
+ * The cover's colour, for whatever wants to be tinted by it.
+ *
+ * Does not queue a fetch of its own: it answers only for a picture the list has
+ * already asked for, so a background cannot be the reason a thumbnail is pulled.
+ */
+bool ui_art_tint(const char *id, SDL_Color *out) {
+	if (!thumbs.started || !id || !id[0]) return false;
+
+	mutexLock(&thumbs.lock);
+
+	bool found = false;
+	for (size_t i = 0; i < THUMB_SLOTS; i++) {
+		ThumbSlot *slot = &thumbs.slots[i];
+		if (slot->has_tint && strcmp(slot->id, id) == 0) {
+			*out = slot->tint;
+			found = true;
+			break;
+		}
+	}
+
+	mutexUnlock(&thumbs.lock);
+	return found;
+}
+
+/*
+ * The same cached picture, drawn as album art.
+ *
+ * A thumbnail is 16:9 and art is square, so a centred square is taken out of the
+ * middle of it rather than squashing the whole frame -- a stretched face is more
+ * obviously wrong than a cropped background.
+ *
+ * With nothing cached the box is filled from the id instead of left grey: a hue
+ * derived from the id, a vertical two-stop gradient in it, and the first character
+ * of the title over the top. It is deterministic, so the same track always looks
+ * the same, and it reads as a design rather than as something that failed to load.
+ */
+void ui_art(const char *id, const char *title, UiRect box) {
+	SDL_Texture *texture = thumb_for(id);
+
+	if (texture) {
+		int side = DECODE_H < DECODE_W ? DECODE_H : DECODE_W;
+		SDL_Rect src = { (DECODE_W - side) / 2, (DECODE_H - side) / 2, side, side };
+		SDL_Rect dst = { box.x, box.y, box.w, box.h };
+
+		SDL_RenderCopy(ui_renderer, texture, &src, &dst);
+		ui_art_frame(box);
+		return;
+	}
+
+	unsigned hash = 2166136261u;
+	for (const char *c = id ? id : ""; *c; c++) hash = (hash ^ (unsigned char)*c) * 16777619u;
+
+	SDL_Color top = ui_hue_colour(hash % 360, 0.30, 0.42);
+	SDL_Color bottom = ui_hue_colour(hash % 360, 0.34, 0.24);
+
+	for (int i = 0; i < box.h; i++) {
+		double t = (double)i / (double)(box.h - 1);
+		SDL_Color mix = {
+			(Uint8)(top.r + (bottom.r - top.r) * t),
+			(Uint8)(top.g + (bottom.g - top.g) * t),
+			(Uint8)(top.b + (bottom.b - top.b) * t),
+			0xFF,
+		};
+		ui_fill_rect(box.x, box.y + i, box.w, 1, mix);
+	}
+
+	/* One character, not the whole title: at this size anything longer is a texture
+	 * of grey rather than a letter. */
+	if (title && title[0]) {
+		char initial[5] = {0};
+		int len = 1;
+		unsigned char lead = (unsigned char)title[0];
+		if ((lead & 0xE0) == 0xC0) len = 2;
+		else if ((lead & 0xF0) == 0xE0) len = 3;
+		else if ((lead & 0xF8) == 0xF0) len = 4;
+		for (int i = 0; i < len && title[i]; i++) initial[i] = title[i];
+
+		SDL_Color wash = { 0xFF, 0xFF, 0xFF, 0x2E };
+		int w = ui_measure_text(FONT_DISPLAY, initial);
+		ui_draw_text(box.x + (box.w - w) / 2, box.y + box.h / 2, FONT_DISPLAY, wash, initial, 0);
+	}
+
+	ui_art_frame(box);
+}
+
 /* ------------------------------------------------------------------- drawing */
 
 static void format_duration(int seconds, char *out, size_t out_len) {
@@ -319,16 +443,40 @@ static void format_views(int64_t views, char *out, size_t out_len) {
 	else snprintf(out, out_len, "%lld", (long long)views);
 }
 
+/*
+ * The thin bar along the bottom edge saying how far in this was left.
+ *
+ * Drawn on the picture rather than written as a time next to the title, because
+ * at a glance the useful question is "roughly where was I", and a bar answers it
+ * without being read. Nothing is drawn for something never left part-way, so an
+ * untouched grid looks exactly as it did before this existed.
+ */
+static void draw_progress(const MediaItem *item, int x, int y, int w, int h) {
+	if (item->position <= 0 || item->duration <= 0) return;
+
+	double fraction = (double)item->position / (double)item->duration;
+	if (fraction > 1.0) fraction = 1.0;
+
+	int filled = (int)(fraction * w);
+	/* A sliver is still worth a pixel: a bar that rounds away to nothing reads as
+	 * never watched, which is the one thing it exists to deny. */
+	if (filled < 2) filled = 2;
+
+	ui_fill_rect(x, y + h - PROGRESS_H, w, PROGRESS_H, COLOR_SHADE);
+	ui_fill_rect(x, y + h - PROGRESS_H, filled, PROGRESS_H, COLOR_LIVE);
+}
+
 static void draw_thumb(const MediaItem *item, int x, int y, int w, int h) {
 	SDL_Texture *texture = thumb_for(item->id);
 
 	if (!texture) {
-		ui_fill_round_rect(x, y, w, h, 8, COLOR_PANEL);
+		ui_panel(x, y, w, h, 8);
 		/* A play triangle rather than a spinner: it says "video" while it waits and
 		 * needs no frame clock to look right. */
 		int cx = x + w / 2 - 6;
 		int cy = y + h / 2;
 		for (int i = 0; i < 14; i++) ui_fill_rect(cx + i, cy - 13 + i, 1, 26 - 2 * i, COLOR_RULE);
+		draw_progress(item, x, y, w, h);
 		return;
 	}
 
@@ -351,6 +499,8 @@ static void draw_thumb(const MediaItem *item, int x, int y, int w, int h) {
 	ui_fill_round_rect(badge_x, badge_y, badge_w, 20, 4, live ? COLOR_LIVE : COLOR_SHADE);
 	ui_draw_text(badge_x + 7, badge_y + 10, FONT_SMALL,
 			live ? COLOR_ON_ACCENT : COLOR_TEXT, time, badge_w);
+
+	draw_progress(item, x, y, w, h);
 }
 
 static void draw_card(const MediaItem *item, int x, int y, bool focused) {

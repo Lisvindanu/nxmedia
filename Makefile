@@ -26,7 +26,7 @@ ROMFS		:=	romfs
 
 APP_TITLE	:=	nxmedia
 APP_AUTHOR	:=	anaphygon
-APP_VERSION	:=	1.3.4
+APP_VERSION	:=	1.4.0
 
 #---------------------------------------------------------------------------------
 # options for code generation
@@ -36,7 +36,7 @@ ARCH	:=	-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS	:=	-g -Wall -O2 -ffunction-sections \
 			$(ARCH) $(DEFINES)
 
-CFLAGS	+=	$(INCLUDE) -D__SWITCH__ -DAPP_VERSION=\"$(APP_VERSION)\"
+CFLAGS	+=	$(INCLUDE) -D__SWITCH__
 
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions
 
@@ -146,8 +146,19 @@ endif
 #---------------------------------------------------------------------------------
 all: $(BUILD)
 
+# APP_VERSION reaches the code through a generated header rather than through -D,
+# because a define on the command line is invisible to make. Changing the version
+# left every object file in place: the NACP showed the new number while the binary
+# still answered with the old one, which made the updater believe it was newer than
+# every release and refuse all of them. The header is rewritten only when the value
+# really changes, so the dependency it creates rebuilds exactly what depends on it.
+VERSION_H := $(BUILD)/app_version.h
+
 $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
+	@printf '#pragma once\n#define APP_VERSION "%s"\n' '$(APP_VERSION)' > $(VERSION_H).tmp
+	@cmp -s $(VERSION_H).tmp $(VERSION_H) 2>/dev/null || mv -f $(VERSION_H).tmp $(VERSION_H)
+	@rm -f $(VERSION_H).tmp
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 #---------------------------------------------------------------------------------

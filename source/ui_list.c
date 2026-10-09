@@ -2,13 +2,23 @@
 
 #include <stdio.h>
 
-#define SCROLLBAR_X 1252
+/*
+ * Inside the action-safe inset, unlike the 1252 this used to sit at -- which put
+ * its right edge 23px from the screen, where any television with overscan simply
+ * swallowed it. The detail column ends at 1196, so there is no collision.
+ */
+#define SCROLLBAR_X 1203
 #define SCROLLBAR_W 5
+
+/* Thick enough to catch the eye across a room; this is the only thing saying which
+ * row is selected, now that the fill no longer pretends to. */
+#define FOCUS_RING 3
 
 #define ROW_GAP 6
 #define ROW_PAD 20
 #define CHIP_W 74
-#define CHIP_H 26
+/* Tall enough for 20px text with room above and below it. */
+#define CHIP_H 30
 #define CHIP_GAP 16
 
 size_t ui_rows_visible(void) {
@@ -47,7 +57,7 @@ static void draw_scrollbar(size_t total, size_t scroll) {
 	if (total <= LIST_ROWS) return;
 
 	int track_h = LIST_ROWS * LIST_ROW_H;
-	ui_fill_round_rect(SCROLLBAR_X, LIST_TOP, SCROLLBAR_W, track_h, 2, COLOR_ROW);
+	ui_fill_round_rect(SCROLLBAR_X, LIST_TOP, SCROLLBAR_W, track_h, 2, COLOR_RULE);
 
 	int thumb_h = (int)((double)track_h * LIST_ROWS / (double)total);
 	if (thumb_h < 30) thumb_h = 30;
@@ -63,8 +73,15 @@ static void draw_row(size_t row, const UiRow *item, bool selected) {
 	int h = LIST_ROW_H - ROW_GAP;
 
 	if (selected) {
+		/*
+		 * Ring first, fill over it, so the ring reads as a border rather than as a
+		 * second rectangle. The accent bar that used to sit at the left edge is gone:
+		 * with a full ring it was saying the same thing twice.
+		 */
+		ui_fill_round_rect(CONTENT_X - FOCUS_RING, y + ROW_GAP / 2 - FOCUS_RING,
+				CONTENT_W + 2 * FOCUS_RING, h + 2 * FOCUS_RING, 10 + FOCUS_RING,
+				COLOR_ACCENT);
 		ui_fill_round_rect(CONTENT_X, y + ROW_GAP / 2, CONTENT_W, h, 10, COLOR_ROW);
-		ui_fill_round_rect(CONTENT_X, y + ROW_GAP / 2, 4, h, 2, COLOR_ACCENT);
 	}
 
 	SDL_Color chip = item->accent ? COLOR_ACCENT : COLOR_RULE;
@@ -79,7 +96,14 @@ static void draw_row(size_t row, const UiRow *item, bool selected) {
 	int name_x = chip_x + CHIP_W + CHIP_GAP;
 	int name_clip = CONTENT_RIGHT - ROW_PAD - detail_w - CHIP_GAP - name_x;
 
-	ui_draw_text(name_x, mid, FONT_ROW, selected ? COLOR_TEXT : COLOR_DIM, item->name, name_clip);
+	/*
+	 * Unselected rows keep full-strength text. Dimming all eight and brightening one
+	 * was backwards: it made seven-eighths of the list harder to read than it needed
+	 * to be, to say something the ring already says. The selected label turns accent
+	 * instead, which is a second signal rather than a penalty on the others.
+	 */
+	ui_draw_text(name_x, mid, FONT_ROW, selected ? COLOR_ACCENT : COLOR_TEXT,
+			item->name, name_clip);
 	if (item->detail) {
 		ui_draw_text_right(CONTENT_RIGHT - ROW_PAD, mid, FONT_SMALL, COLOR_DIM, item->detail, 0);
 	}

@@ -14,6 +14,16 @@
 /** Puts the picture up for something that has already been handed to the player. */
 void stage_begin(const char *title);
 
+/**
+ * Same, but tied to a history entry, so where this is left is remembered and
+ * where it was left is returned to.
+ *
+ * `resume_from` of zero starts at the beginning. The jump cannot be made here:
+ * the worker has only just started and the source has no duration to seek within
+ * yet, so it is deferred until playback actually reports itself running.
+ */
+void stage_begin_tracked(const char *title, const char *id, int resume_from);
+
 /** Stops playback and gives the screen back to the pane underneath. */
 void stage_end(void);
 

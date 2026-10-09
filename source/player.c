@@ -1,5 +1,7 @@
 #include "player.h"
 
+#include "app_version.h"
+
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -32,11 +34,15 @@
  * a live stream is meaningless anyway. */
 #define DURATION_UNKNOWN (-1.0)
 
+/* An access token is a little over a kilobyte; the header around it is short. */
+#define TOKEN_HEADER_MAX 2304
+
 /** What the worker was asked to play. It outlives the call, so it owns its strings. */
 typedef struct {
 	char *url;
 	char *referer;
 	char *user_agent;
+	char *bearer;
 } Request;
 
 typedef struct {
@@ -242,8 +248,34 @@ static bool open_media(const Request *request, Media *media) {
 	 * alive without the user pressing anything. */
 	av_dict_set(&opts, "reconnect", "1", 0);
 	av_dict_set(&opts, "reconnect_streamed", "1", 0);
+
+	/*
+	 * Without this ffmpeg closes the socket after every range request and opens a
+	 * new one for the next, which on a seekable HTTPS source means a fresh TCP
+	 * handshake and a fresh TLS handshake each time. Opening an MP4 whose index
+	 * sits at the end of the file takes several of those before the first frame,
+	 * and on this console each one costs real time.
+	 */
+	av_dict_set(&opts, "multiple_requests", "1", 0);
 	if (request->referer) av_dict_set(&opts, "referer", request->referer, 0);
 	if (request->user_agent) av_dict_set(&opts, "user_agent", request->user_agent, 0);
+
+	/*
+	 * ffmpeg has no option for an Authorization header, so it goes in the raw
+	 * "headers" list. The trailing CRLF is not optional: ffmpeg appends its own
+	 * headers straight after this string, and without the break the next one is
+	 * swallowed into this line.
+	 */
+	if (request->bearer) {
+		char auth[TOKEN_HEADER_MAX];
+		snprintf(auth, sizeof(auth), "Authorization: Bearer %s\r\n", request->bearer);
+		av_dict_set(&opts, "headers", auth, 0);
+	}
+
+	/* Timed and printed because "it takes a while to connect" is not something that
+	 * can be acted on, and the two steps below have very different causes: opening
+	 * is one request, probing is however many seeks the container demands. */
+	uint32_t began = SDL_GetTicks();
 
 	/* Nulls the context itself on failure, so there is nothing left to free here. */
 	int rc = avformat_open_input(&media->fmt, request->url, NULL, &opts);
@@ -253,12 +285,17 @@ static bool open_media(const Request *request, Media *media) {
 		return false;
 	}
 
+	uint32_t opened = SDL_GetTicks();
+
 	rc = avformat_find_stream_info(media->fmt, NULL);
 	if (rc < 0) {
 		if (!stopping()) fail("tidak mengenali isinya: %.180s", av_err(rc));
 		close_media(media);
 		return false;
 	}
+
+	printf("[player] buka %u ms, kenali %u ms\n",
+			(unsigned)(opened - began), (unsigned)(SDL_GetTicks() - opened));
 
 	/* Failing to reach NVDEC is not fatal: the software decoders are still there, and
 	 * an audio-only source never wanted it in the first place. */
@@ -366,6 +403,7 @@ static void free_request(Request *request) {
 	free(request->url);
 	free(request->referer);
 	free(request->user_agent);
+	free(request->bearer);
 	free(request);
 }
 
@@ -526,7 +564,8 @@ bool player_play(const char *url, const PlayerHeaders *headers, char *err, size_
 	bool copied = request && dup_opt(url, &request->url);
 	if (copied && headers) {
 		copied = dup_opt(headers->referer, &request->referer) &&
-				dup_opt(headers->user_agent, &request->user_agent);
+				dup_opt(headers->user_agent, &request->user_agent) &&
+				dup_opt(headers->bearer, &request->bearer);
 	}
 
 	if (!copied) {

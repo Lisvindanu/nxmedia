@@ -41,6 +41,13 @@ void player_exit(void);
 typedef struct {
 	char *referer;
 	char *user_agent;
+	/**
+	 * An OAuth access token to present as a bearer. Needed by Google Drive, which
+	 * stopped taking credentials in the query string, so the only way to name a
+	 * private file is a header -- and the header has to come from here, because the
+	 * worker is what opens the connection.
+	 */
+	char *bearer;
 } PlayerHeaders;
 
 /**

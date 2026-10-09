@@ -20,7 +20,16 @@
 #define CONTENT_RIGHT 1216
 #define CONTENT_W (CONTENT_RIGHT - CONTENT_X)
 
-#define HEADER_RULE_Y 136
+/*
+ * 96, down from 136.
+ *
+ * Nintendo's own header is 88 and RetroArch's Horizon-imitating one is 87; ours was
+ * 48px taller for no reason anybody could name, and that 48px came straight out of
+ * the list. Three lines no longer fit above the rule, so the subtitle moved to the
+ * left of the hint bar -- which is where nx-hbmenu has always put its context line,
+ * and which was empty space we were already reserving.
+ */
+#define HEADER_RULE_Y 96
 #define FOOTER_Y 636
 
 /* The scrub bar sits above the hint bar, inside the same darkened band. */
@@ -28,11 +37,19 @@
 #define SCRUB_H 4
 #define SCRUB_KNOB 14
 
-/* The list fills the gap between the header rule and the hint bar. Eight rows is
- * what a 52px row leaves room for without crowding either edge. */
-#define LIST_TOP 164
-#define LIST_ROW_H 52
-#define LIST_ROWS 8
+/*
+ * The list fills the gap between the header rule and the hint bar.
+ *
+ * 84px rows rather than 52. At 52 a row was 5.57mm on the 6.2" screen -- under every
+ * published touch floor, and under what a thumb can hit without aiming; 84 is
+ * exactly 9.00mm, which is where the research clusters. Six of them land on 628,
+ * eight pixels clear of the first hint pill, so nothing is cropped at either end.
+ *
+ * Fewer, larger rows is the deliberate trade. A list is read before it is tapped.
+ */
+#define LIST_TOP (HEADER_RULE_Y + 28)
+#define LIST_ROW_H 84
+#define LIST_ROWS 6
 
 enum {
 	FONT_TITLE,
@@ -76,9 +93,29 @@ void ui_cache_clear(void);
 /* ------------------------------------------------------------------- shapes */
 
 void ui_fill_rect(int x, int y, int w, int h, SDL_Color color);
+
+/** A COLOR_PANEL surface with a COLOR_RULE hairline, so its edge survives a TV. */
+void ui_panel(int x, int y, int w, int h, int radius);
 void ui_fill_round_rect(int x, int y, int w, int h, int radius, SDL_Color color);
 
 /* -------------------------------------------------------------------- frame */
 
 /** Paints the background, sidebar panel and footer panel every screen sits on. */
 void ui_draw_shell(void);
+
+/* ------------------------------------------------------------------- music */
+
+/** A hairline frame around album art, so it has an edge against any background. */
+void ui_art_frame(UiRect box);
+
+/** A colour at this hue, for the deterministic art placeholder. s and v are 0..1. */
+SDL_Color ui_hue_colour(int hue, double saturation, double value);
+
+/**
+ * The average colour of this id's cover, if it has already been fetched.
+ *
+ * Lives here rather than in ui.h because only the drawing code can use it -- a pane
+ * has no business knowing what colour anything is. False means there is nothing to
+ * tint from yet, so draw what would have been drawn anyway rather than wait.
+ */
+bool ui_art_tint(const char *id, SDL_Color *out);

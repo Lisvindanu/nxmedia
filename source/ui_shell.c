@@ -16,7 +16,16 @@
 #define HINT_GAP 10
 #define HINT_SPACE 12
 
-static const int FONT_SIZES[FONT_COUNT] = { 30, 24, 23, 19, 54 };
+/*
+ * Five genuinely distinct steps: meta, secondary, body, title, display.
+ *
+ * It was { 30, 24, 23, 19, 54 } -- ROW 24 and SIDE 23 one pixel apart, so four
+ * steps did five jobs, and title against body was 1.25:1. That is not a hierarchy;
+ * it reads as one size with a rounding error. Sony's measured now-playing ratio is
+ * 1.5:1, and it is carried by size and opacity together -- which is why COLOR_DIM
+ * is used on every secondary line rather than only a smaller size.
+ */
+static const int FONT_SIZES[FONT_COUNT] = { 40, 30, 25, 20, 56 };
 
 static SDL_Window *window;
 SDL_Renderer *ui_renderer;
@@ -117,10 +126,24 @@ void ui_present(void) {
 	SDL_RenderPresent(ui_renderer);
 }
 
+/*
+ * Where the subtitle goes now that the header is 96 tall.
+ *
+ * It carries notes and failures, which have to stay readable, and the left half of
+ * the hint band was empty. nx-hbmenu puts the current path exactly here with the
+ * button hints right-aligned on the same line, so the two share the band without
+ * either moving.
+ */
+#define SUBTITLE_MID (FOOTER_Y + 26)
+#define SUBTITLE_W (CONTENT_W / 2)
+
 void ui_header(const char *eyebrow, const char *title, const char *subtitle) {
-	ui_draw_text(CONTENT_X + 2, 44, FONT_SMALL, COLOR_ACCENT, eyebrow, CONTENT_W);
-	ui_draw_text(CONTENT_X, 82, FONT_TITLE, COLOR_TEXT, title, CONTENT_W);
-	ui_draw_text(CONTENT_X + 1, 116, FONT_SMALL, COLOR_DIM, subtitle, CONTENT_W);
+	ui_draw_text(CONTENT_X + 2, 26, FONT_SMALL, COLOR_ACCENT, eyebrow, CONTENT_W);
+	ui_draw_text(CONTENT_X, 64, FONT_TITLE, COLOR_TEXT, title, CONTENT_W);
+
+	if (subtitle && subtitle[0]) {
+		ui_draw_text(CONTENT_X, SUBTITLE_MID, FONT_SMALL, COLOR_DIM, subtitle, SUBTITLE_W);
+	}
 }
 
 /* Dark enough to read white text against a bright picture, light enough that the
@@ -164,7 +187,7 @@ void ui_message(const char *label, const char *detail, const UiHint *hints, size
 	int h = detail && detail[0] ? 200 : 140;
 	int y = (SCREEN_H - h) / 2 - 40;
 	ui_fill_round_rect(CARD_X - 1, y - 1, CARD_W + 2, h + 2, 17, COLOR_RULE);
-	ui_fill_round_rect(CARD_X, y, CARD_W, h, 16, COLOR_PANEL);
+	ui_panel(CARD_X, y, CARD_W, h, 16);
 
 	ui_draw_text(CARD_X + 36, y + 52, FONT_TITLE, COLOR_TEXT, label, CARD_W - 72);
 	if (detail && detail[0]) {
@@ -190,7 +213,7 @@ int ui_legend_height(size_t count) {
 }
 
 void ui_legend(const UiHint *rows, size_t count, int x, int y) {
-	ui_fill_round_rect(x, y, LEGEND_W, ui_legend_height(count), 16, COLOR_PANEL);
+	ui_panel(x, y, LEGEND_W, ui_legend_height(count), 16);
 
 	int chip_x = x + LEGEND_PAD;
 	int label_x = chip_x + LEGEND_CHIP_W + 12;
@@ -209,7 +232,7 @@ void ui_legend(const UiHint *rows, size_t count, int x, int y) {
 	}
 }
 
-#define SETTING_Y 196
+#define SETTING_Y (HEADER_RULE_Y + 28)
 #define SETTING_H 76
 #define SETTING_GAP 16
 #define SETTING_PAD 28
@@ -219,13 +242,19 @@ void ui_setting_row(int index, const char *label, const char *value, bool select
 	int y = SETTING_Y + index * (SETTING_H + SETTING_GAP);
 	int mid = y + SETTING_H / 2;
 
-	ui_fill_round_rect(CONTENT_X, y, CONTENT_W, SETTING_H, 16, selected ? COLOR_ROW : COLOR_PANEL);
-	if (selected) ui_fill_round_rect(CONTENT_X, y, SETTING_CURSOR_W, SETTING_H, 3, COLOR_ACCENT);
+	if (selected) {
+		/* The same ring the list rows use, so a selected thing looks like a selected
+		 * thing wherever it is. The 6px cursor it replaces said the same thing. */
+		ui_fill_round_rect(CONTENT_X - 3, y - 3, CONTENT_W + 6, SETTING_H + 6, 19, COLOR_ACCENT);
+		ui_fill_round_rect(CONTENT_X, y, CONTENT_W, SETTING_H, 16, COLOR_ROW);
+	} else {
+		ui_panel(CONTENT_X, y, CONTENT_W, SETTING_H, 16);
+	}
 
 	/* The value carries update failures, which are long enough to run past the label
 	 * and off the panel unless they are clipped to whatever the label leaves. */
 	int label_w = ui_draw_text(CONTENT_X + SETTING_PAD, mid, FONT_ROW,
-			selected ? COLOR_TEXT : COLOR_DIM, label, CONTENT_W / 2);
+			selected ? COLOR_ACCENT : COLOR_TEXT, label, CONTENT_W / 2);
 	ui_draw_text_right(CONTENT_RIGHT - SETTING_PAD, mid, FONT_ROW, COLOR_ACCENT, value,
 			CONTENT_W - SETTING_PAD * 2 - label_w - SETTING_GAP);
 }
@@ -248,7 +277,12 @@ static SDL_Color shade(SDL_Color color, int percent) {
 }
 
 void ui_footer(const UiHint *hints, size_t count, uint64_t held) {
-	int mid = FOOTER_Y + (SCREEN_H - FOOTER_Y) / 2;
+	/*
+	 * Centred high in the band rather than in the middle of it. Centred, the pills
+	 * reached y=700 -- 20px from the screen edge, against a 36px action-safe inset,
+	 * so on a television with overscan the bottom of every pill was cut off.
+	 */
+	int mid = FOOTER_Y + HINT_PILL_H / 2 + 4;
 	int top = mid - HINT_PILL_H / 2;
 
 	hint_box_count = 0;

@@ -43,6 +43,7 @@ typedef enum {
 	SRC_BROWSE,
 	SRC_HISTORY,
 	SRC_FAVOURITES,
+	SRC_SAVED,
 	SRC_COUNT,
 } Source;
 
@@ -108,8 +109,48 @@ static const MediaListing *current_list(void) {
 	switch (pane.source) {
 		case SRC_HISTORY: return shelf_list(SHELF_HISTORY);
 		case SRC_FAVOURITES: return shelf_list(SHELF_FAVOURITES);
+		case SRC_SAVED: return shelf_list(SHELF_SAVED);
 		default: return &pane.fetched;
 	}
+}
+
+/*
+ * Whether this video is already on the card, and where.
+ *
+ * Checked before anything is asked of the server, on every tab rather than only on
+ * the saved one. Having pressed save once should mean never waiting for that video
+ * again -- it plays off the card at once, with no resolving, no merge and no proxy
+ * that might be down. The file is named by the server, so the name in the entry is
+ * the only way to find it again.
+ */
+/*
+ * Says where the bytes are coming from, when that is not what the tab implies.
+ *
+ * Only two cases are worth a word. Playing off the card is worth saying because it
+ * explains why there was no wait; an entry on the saved tab whose file has gone is
+ * worth saying because it silently costs the wait back, and a tab called Saved that
+ * behaves like a search result would otherwise look broken.
+ */
+static void note_source(bool local, Source source) {
+	if (local) note("%s", T(STR_FROM_CARD));
+	else if (source == SRC_SAVED) note("%s", T(STR_NOT_SAVED_YET));
+}
+
+static bool saved_copy(const MediaItem *item, char *out, size_t out_len) {
+	if (!item->filename || !item->filename[0]) return false;
+
+	char path[512];
+	int written = snprintf(path, sizeof(path), "%s/%s", SAVE_DIR, item->filename);
+	if (written < 0 || (size_t)written >= sizeof(path)) return false;
+
+	FILE *file = fopen(path, "rb");
+	if (!file) return false;
+	fclose(file);
+
+	/* ffmpeg reads everything before the first colon as a protocol name, and every
+	 * path here begins "sdmc:". The file protocol takes the rest verbatim. */
+	snprintf(out, out_len, "file:%s", path);
+	return true;
 }
 
 static const MediaItem *current_item(void) {
@@ -159,6 +200,7 @@ void youtube_pane_open(void) {
 		note("%.150s", err);
 	}
 }
+
 
 void youtube_pane_exit(void) {
 	media_listing_free(&pane.fetched);
@@ -242,16 +284,20 @@ static void listen_selected(void) {
 	const MediaItem *item = current_item();
 	if (!item || refuse_live(item)) return;
 
-	/* Resolved first, then played. The proxy stays silent until yt-dlp has finished
-	 * with a cold video, which outlasts ffmpeg's own read timeout -- so asking the
-	 * player to wait it out is how this ended up connecting forever. */
-	ui_message(T(STR_PREPARING), item->title, NULL, 0);
-
 	char url[640];
 	char err[160];
-	if (!media_prepare_audio(&pane.settings, item, url, sizeof(url), err, sizeof(err))) {
-		note("%.150s", err);
-		return;
+	bool local = saved_copy(item, url, sizeof(url));
+
+	if (!local) {
+		/* Resolved first, then played. The proxy stays silent until yt-dlp has
+		 * finished with a cold video, which outlasts ffmpeg's own read timeout -- so
+		 * asking the player to wait it out is how this ended up connecting forever. */
+		ui_message(T(STR_PREPARING), item->title, NULL, 0);
+
+		if (!media_prepare_audio(&pane.settings, item, url, sizeof(url), err, sizeof(err))) {
+			note("%.150s", err);
+			return;
+		}
 	}
 
 	if (!player_play(url, NULL, err, sizeof(err))) {
@@ -259,9 +305,14 @@ static void listen_selected(void) {
 		return;
 	}
 
-	pane.note[0] = '\0';
+	note_source(local, pane.source);
+
+	/* Read before the play is recorded: recording moves the entry, and the position
+	 * travels with it rather than being looked up again afterwards. */
+	int resume_from = shelf_position(item->id);
+
 	shelf_remember(item);
-	stage_begin(item->title);
+	stage_begin_tracked(item->title, item->id, resume_from);
 }
 
 static UiHint WAIT_HINTS[] = {
@@ -346,13 +397,17 @@ static void watch_selected(void) {
 	const MediaItem *item = current_item();
 	if (!item || refuse_live(item)) return;
 
-	ui_message(T(STR_PREPARING), item->title, NULL, 0);
-
 	char url[640];
 	char err[160];
-	if (!media_prepare_stream(&pane.settings, item, url, sizeof(url), err, sizeof(err))) {
-		note("%.150s", err);
-		return;
+	bool local = saved_copy(item, url, sizeof(url));
+
+	if (!local) {
+		ui_message(T(STR_PREPARING), item->title, NULL, 0);
+
+		if (!media_prepare_stream(&pane.settings, item, url, sizeof(url), err, sizeof(err))) {
+			note("%.150s", err);
+			return;
+		}
 	}
 
 	if (!player_play(url, NULL, err, sizeof(err))) {
@@ -360,9 +415,12 @@ static void watch_selected(void) {
 		return;
 	}
 
-	pane.note[0] = '\0';
+	note_source(local, pane.source);
+
+	int resume_from = shelf_position(item->id);
+
 	shelf_remember(item);
-	stage_begin(item->title);
+	stage_begin_tracked(item->title, item->id, resume_from);
 }
 
 static void save_selected(void) {
@@ -380,6 +438,9 @@ static void save_selected(void) {
 	char err[160];
 	if (media_download(&pane.settings, item, SAVE_DIR, on_progress, NULL, on_waiting,
 			err, sizeof(err))) {
+		/* Recorded only after the bytes landed. An entry for a file that is not there
+		 * would send the player at a path that does not exist. */
+		shelf_remember_saved(item);
 		note("%s: %.120s", T(STR_SAVED), item->filename);
 	} else if (pane.cancelled) {
 		/* The .part file stays behind, so pressing save again picks up where this
@@ -523,6 +584,7 @@ void youtube_pane_draw(uint64_t held) {
 	TABS[SRC_BROWSE] = pane.browse_label;
 	TABS[SRC_HISTORY] = T(STR_HISTORY);
 	TABS[SRC_FAVOURITES] = T(STR_FAVOURITES);
+	TABS[SRC_SAVED] = T(STR_SAVED_TAB);
 
 	const MediaListing *list = current_list();
 

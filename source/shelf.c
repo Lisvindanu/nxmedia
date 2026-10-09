@@ -21,7 +21,15 @@
  * one go without anyone noticing. */
 #define HISTORY_MAX 60
 #define FAVOURITES_MAX 120
+/* Bounded by the card long before it is bounded by this: a saved video is tens of
+ * megabytes, so a card runs out of room first. */
+#define SAVED_MAX 300
 #define SHELF_MAX_BYTES (512 * 1024)
+
+/* Under half a minute in there is nothing to come back to; within the last
+ * fifteen seconds it is finished. Both are stored as "start from the beginning". */
+#define RESUME_FLOOR_SECONDS 30
+#define RESUME_TAIL_SECONDS 15
 
 static struct {
 	MediaListing list;
@@ -30,6 +38,7 @@ static struct {
 } shelves[SHELF_COUNT] = {
 	[SHELF_HISTORY] = { .cap = HISTORY_MAX, .path = SHELF_DIR "/history.json" },
 	[SHELF_FAVOURITES] = { .cap = FAVOURITES_MAX, .path = SHELF_DIR "/favourites.json" },
+	[SHELF_SAVED] = { .cap = SAVED_MAX, .path = SHELF_DIR "/saved.json" },
 };
 
 static bool loaded;
@@ -95,6 +104,7 @@ static bool copy_item(json_object *node, MediaItem *out) {
 		.author = author ? strdup(author) : NULL,
 		.views = int_field(node, "views"),
 		.duration = (int)int_field(node, "duration"),
+		.position = (int)int_field(node, "position"),
 	};
 
 	if (!out->id || !out->title || !out->filename) {
@@ -167,6 +177,11 @@ static void save_one(ShelfKind kind) {
 		}
 		json_object_object_add(node, "views", json_object_new_int64(item->views));
 		json_object_object_add(node, "duration", json_object_new_int64(item->duration));
+		/* Written only when there is somewhere to go back to, so a list of things
+		 * watched through stays as small as it was before this existed. */
+		if (item->position > 0) {
+			json_object_object_add(node, "position", json_object_new_int64(item->position));
+		}
 
 		json_object_array_add(root, node);
 	}
@@ -234,6 +249,7 @@ static bool push_front(ShelfKind kind, const MediaItem *item) {
 		.author = item->author ? strdup(item->author) : NULL,
 		.views = item->views,
 		.duration = item->duration,
+		.position = item->position,
 	};
 
 	if (!copy.id || !copy.title || !copy.filename) {
@@ -256,9 +272,21 @@ void shelf_remember(const MediaItem *item) {
 	 * second line for it, which is what makes the list read as places you have
 	 * been rather than a tally of how often. */
 	size_t at = find(SHELF_HISTORY, item->id);
+
+	/*
+	 * The entry being replaced is the only place the old position is kept, and the
+	 * item handed in here came from a search or a card and has none. Carrying it
+	 * across is what lets pressing A on something half-watched still resume: without
+	 * this, recording the play is what erases where the play should start.
+	 */
+	int keep = (at != (size_t)-1) ? shelves[SHELF_HISTORY].list.items[at].position : 0;
+
 	if (at != (size_t)-1) remove_at(SHELF_HISTORY, at);
 
-	if (push_front(SHELF_HISTORY, item)) save_one(SHELF_HISTORY);
+	if (push_front(SHELF_HISTORY, item)) {
+		shelves[SHELF_HISTORY].list.items[0].position = keep;
+		save_one(SHELF_HISTORY);
+	}
 }
 
 bool shelf_toggle_favourite(const MediaItem *item) {
@@ -280,4 +308,47 @@ bool shelf_toggle_favourite(const MediaItem *item) {
 
 bool shelf_is_favourite(const char *id) {
 	return id && find(SHELF_FAVOURITES, id) != (size_t)-1;
+}
+
+void shelf_remember_saved(const MediaItem *item) {
+	shelf_load();
+
+	/* Saving the same video twice overwrites one file on the card, so it must leave
+	 * one row here too -- and the newest attempt is the one whose title is right. */
+	size_t at = find(SHELF_SAVED, item->id);
+	if (at != (size_t)-1) remove_at(SHELF_SAVED, at);
+
+	if (push_front(SHELF_SAVED, item)) save_one(SHELF_SAVED);
+}
+
+int shelf_position(const char *id) {
+	if (!id) return 0;
+	shelf_load();
+
+	size_t at = find(SHELF_HISTORY, id);
+	return at == (size_t)-1 ? 0 : shelves[SHELF_HISTORY].list.items[at].position;
+}
+
+void shelf_remember_position(const char *id, int seconds) {
+	if (!id) return;
+	shelf_load();
+
+	size_t at = find(SHELF_HISTORY, id);
+	if (at == (size_t)-1) return;
+
+	MediaItem *item = &shelves[SHELF_HISTORY].list.items[at];
+	if (seconds < 0) seconds = 0;
+
+	/* Anything inside the last stretch counts as watched. Resuming there would put
+	 * someone back at the end of what they just finished, which reads as the app
+	 * having lost their place rather than kept it. */
+	if (item->duration > 0 && seconds > item->duration - RESUME_TAIL_SECONDS) seconds = 0;
+
+	/* Below the floor there is nothing worth going back to, and offering to resume
+	 * four seconds in is noise. */
+	if (seconds < RESUME_FLOOR_SECONDS) seconds = 0;
+
+	if (item->position == seconds) return;
+	item->position = seconds;
+	save_one(SHELF_HISTORY);
 }

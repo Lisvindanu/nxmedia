@@ -9,6 +9,7 @@
 #include <switch.h>
 
 #include "util.h"
+#include "app_version.h"
 
 /* Binaries live in their own public repo so the updater needs no credentials; the
  * source repo stays private. One repo per app, because the releases/latest endpoint
