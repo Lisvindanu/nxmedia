@@ -93,14 +93,17 @@ bool media_prepare_audio(const Settings *cfg, const MediaItem *item,
 /**
  * Reports a URL the player can open at once, and makes sure it is ready to answer.
  *
- * This is the 360p stream YouTube already serves with the sound inside it, so the
- * server has nothing to merge and the wait does not grow with the video's length.
- * It is what makes an hour-long recording watchable at all: merging one costs a
- * third of its running time, which nobody waits out to press play.
+ * An HLS manifest, which is 720p by default and needs nothing merged. The first byte
+ * arrives in well under three seconds whether the video runs four minutes or four
+ * and a half hours: the wait does not grow with length at all, which is what makes a
+ * long recording watchable: merging one costs a third of its running time, and
+ * nobody waits that out to press play.
  *
- * The first request for a given video still pays for resolving it -- measured
- * between eight and twenty-five seconds -- which is why it is warmed here rather
- * than handed to a player whose own read timeout is fifteen.
+ * It falls back to the old 360p proxy for the videos that have no usable manifest,
+ * so a failure there costs quality rather than the video.
+ *
+ * Still warmed rather than handed straight to the player: the first request for a
+ * cold video pays for resolving it, and ffmpeg's own read timeout is fifteen seconds.
  */
 bool media_prepare_stream(const Settings *cfg, const MediaItem *item,
 		char *url_out, size_t url_len, char *err, size_t err_len);

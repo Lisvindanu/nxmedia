@@ -136,11 +136,31 @@ static void note_source(bool local, Source source) {
 	else if (source == SRC_SAVED) note("%s", T(STR_NOT_SAVED_YET));
 }
 
-static bool saved_copy(const MediaItem *item, char *out, size_t out_len) {
-	if (!item->filename || !item->filename[0]) return false;
+/*
+ * The fields of the thing being acted on, copied out before anything is recorded.
+ *
+ * Every shelf call rewrites the list it owns: remove_at frees the entry's strings
+ * and memmoves the rest down, push_front memmoves them all back up. When the pane
+ * is showing that same shelf, the MediaItem pointer the caller holds points into
+ * it -- so after recording a play, reading item->title gives whatever slid into
+ * that slot, and with the cursor near the top that is whatever sits at index zero.
+ * Every video appeared to be the first one in the history.
+ *
+ * Copying first is the whole fix. The strings are small and this happens once per
+ * press.
+ */
+typedef struct {
+	char id[64];
+	char title[256];
+	char filename[256];
+	int duration;
+} Chosen;
+
+static bool saved_copy(const Chosen *chosen, char *out, size_t out_len) {
+	if (!chosen->filename[0]) return false;
 
 	char path[512];
-	int written = snprintf(path, sizeof(path), "%s/%s", SAVE_DIR, item->filename);
+	int written = snprintf(path, sizeof(path), "%s/%s", SAVE_DIR, chosen->filename);
 	if (written < 0 || (size_t)written >= sizeof(path)) return false;
 
 	FILE *file = fopen(path, "rb");
@@ -159,6 +179,20 @@ static const MediaItem *current_item(void) {
 
 	return at < list->count ? &list->items[at] : NULL;
 }
+
+/** Copies the selected entry out, so a shelf write cannot pull it away. */
+static bool take(Chosen *out) {
+	const MediaItem *item = current_item();
+	if (!item) return false;
+
+	snprintf(out->id, sizeof(out->id), "%s", item->id);
+	snprintf(out->title, sizeof(out->title), "%s", item->title);
+	snprintf(out->filename, sizeof(out->filename), "%s",
+			item->filename ? item->filename : "");
+	out->duration = item->duration;
+	return true;
+}
+
 
 /* Pulls the cursor back inside a list that shrank underneath it -- a favourite
  * dropped, say, or a source switched to while it was shorter. */
@@ -271,8 +305,8 @@ static void search(void) {
 /* A live stream has no length and no finished file behind it, so the server can
  * neither merge it nor proxy it. Refusing here costs nothing; letting it through
  * costs a minute of waiting for a failure that was knowable in advance. */
-static bool refuse_live(const MediaItem *item) {
-	if (item->duration > 0) return false;
+static bool refuse_live(const Chosen *chosen) {
+	if (chosen->duration > 0) return false;
 
 	note("%s", T(STR_LIVE_NO_SUPPORT));
 	return true;
@@ -281,20 +315,22 @@ static bool refuse_live(const MediaItem *item) {
 /* Audio only, and quick. Worth its own button because a song does not need the
  * server to spend half a minute merging a picture nobody is going to look at. */
 static void listen_selected(void) {
-	const MediaItem *item = current_item();
-	if (!item || refuse_live(item)) return;
+	Chosen chosen;
+	if (!take(&chosen) || refuse_live(&chosen)) return;
 
 	char url[640];
 	char err[160];
-	bool local = saved_copy(item, url, sizeof(url));
+	bool local = saved_copy(&chosen, url, sizeof(url));
 
 	if (!local) {
 		/* Resolved first, then played. The proxy stays silent until yt-dlp has
 		 * finished with a cold video, which outlasts ffmpeg's own read timeout -- so
 		 * asking the player to wait it out is how this ended up connecting forever. */
-		ui_message(T(STR_PREPARING), item->title, NULL, 0);
+		ui_message(T(STR_PREPARING), chosen.title, NULL, 0);
 
-		if (!media_prepare_audio(&pane.settings, item, url, sizeof(url), err, sizeof(err))) {
+		const MediaItem *item = current_item();
+		if (!item || !media_prepare_audio(&pane.settings, item, url, sizeof(url),
+				err, sizeof(err))) {
 			note("%.150s", err);
 			return;
 		}
@@ -309,10 +345,13 @@ static void listen_selected(void) {
 
 	/* Read before the play is recorded: recording moves the entry, and the position
 	 * travels with it rather than being looked up again afterwards. */
-	int resume_from = shelf_position(item->id);
+	int resume_from = shelf_position(chosen.id);
 
-	shelf_remember(item);
-	stage_begin_tracked(item->title, item->id, resume_from);
+	const MediaItem *item = current_item();
+	if (item) shelf_remember(item);
+
+	/* From the copies: `item` points into the list shelf_remember just rewrote. */
+	stage_begin_tracked(chosen.title, chosen.id, resume_from);
 }
 
 static UiHint WAIT_HINTS[] = {
@@ -394,17 +433,19 @@ static bool on_progress(void *user, int64_t done, int64_t total) {
  * that one is worth its wait because it is kept.
  */
 static void watch_selected(void) {
-	const MediaItem *item = current_item();
-	if (!item || refuse_live(item)) return;
+	Chosen chosen;
+	if (!take(&chosen) || refuse_live(&chosen)) return;
 
 	char url[640];
 	char err[160];
-	bool local = saved_copy(item, url, sizeof(url));
+	bool local = saved_copy(&chosen, url, sizeof(url));
 
 	if (!local) {
-		ui_message(T(STR_PREPARING), item->title, NULL, 0);
+		ui_message(T(STR_PREPARING), chosen.title, NULL, 0);
 
-		if (!media_prepare_stream(&pane.settings, item, url, sizeof(url), err, sizeof(err))) {
+		const MediaItem *item = current_item();
+		if (!item || !media_prepare_stream(&pane.settings, item, url, sizeof(url),
+				err, sizeof(err))) {
 			note("%.150s", err);
 			return;
 		}
@@ -417,15 +458,21 @@ static void watch_selected(void) {
 
 	note_source(local, pane.source);
 
-	int resume_from = shelf_position(item->id);
+	int resume_from = shelf_position(chosen.id);
 
-	shelf_remember(item);
-	stage_begin_tracked(item->title, item->id, resume_from);
+	const MediaItem *item = current_item();
+	if (item) shelf_remember(item);
+
+	/* From the copies: `item` points into the list shelf_remember just rewrote. */
+	stage_begin_tracked(chosen.title, chosen.id, resume_from);
 }
 
 static void save_selected(void) {
+	Chosen chosen;
+	if (!take(&chosen) || refuse_live(&chosen)) return;
+
 	const MediaItem *item = current_item();
-	if (!item || refuse_live(item)) return;
+	if (!item) return;
 
 	if (!mkdir_p(SAVE_DIR)) {
 		note("%s: %s", T(STR_SAVE_FAIL), SAVE_DIR);
@@ -441,7 +488,8 @@ static void save_selected(void) {
 		/* Recorded only after the bytes landed. An entry for a file that is not there
 		 * would send the player at a path that does not exist. */
 		shelf_remember_saved(item);
-		note("%s: %.120s", T(STR_SAVED), item->filename);
+		/* From the copy: on the saved tab, that call just rewrote this very list. */
+		note("%s: %.120s", T(STR_SAVED), chosen.filename);
 	} else if (pane.cancelled) {
 		/* The .part file stays behind, so pressing save again picks up where this
 		 * left off rather than starting the transfer over. */

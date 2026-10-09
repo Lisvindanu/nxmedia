@@ -48,6 +48,14 @@ static char *read_file(const char *path) {
 	return text;
 }
 
+static bool bool_field(json_object *root, const char *key, bool fallback) {
+	json_object *value = NULL;
+	if (!json_object_object_get_ex(root, key, &value)) return fallback;
+	if (!json_object_is_type(value, json_type_boolean)) return fallback;
+
+	return json_object_get_boolean(value);
+}
+
 static void copy_string_field(json_object *root, const char *key, char *out, size_t out_len) {
 	json_object *value = NULL;
 	if (!json_object_object_get_ex(root, key, &value)) return;
@@ -61,6 +69,7 @@ void settings_load(Settings *out) {
 	snprintf(out->mediavault_url, sizeof(out->mediavault_url), "%s", DEFAULT_MEDIAVAULT_URL);
 	snprintf(out->mediavault_edge_url, sizeof(out->mediavault_edge_url), "%s",
 			DEFAULT_MEDIAVAULT_EDGE_URL);
+	out->prefer_hls = false;
 
 	char *text = read_file(SETTINGS_PATH);
 	if (!text) return;
@@ -77,6 +86,7 @@ void settings_load(Settings *out) {
 				sizeof(out->mediavault_url));
 		copy_string_field(root, "mediavault_edge_url", out->mediavault_edge_url,
 				sizeof(out->mediavault_edge_url));
+		out->prefer_hls = bool_field(root, "prefer_hls", false);
 	}
 
 	json_object_put(root);

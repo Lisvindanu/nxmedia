@@ -265,13 +265,56 @@ static bool push_front(ShelfKind kind, const MediaItem *item) {
 	return true;
 }
 
+
+/*
+ * A copy of the fields push_front needs, on the stack.
+ *
+ * push_front builds its entry by reading the pointer it is handed -- and when the
+ * pane is showing this very shelf, that pointer points into the list remove_at has
+ * just rewritten. remove_at frees the slot's strings and memmoves the rest down, so
+ * what push_front then copied was whichever neighbour slid into the slot. Playing
+ * from the history filled the history with its own neighbours, which is exactly what
+ * it looked like.
+ *
+ * Taking the copy before anything moves is the whole fix. Its strings point at the
+ * caller's buffers and are never freed by the shelf: push_front strdups out of them.
+ */
+typedef struct {
+	char id[64];
+	char title[512];
+	char filename[512];
+	char author[256];
+	MediaItem item;
+} Snapshot;
+
+static void snapshot_take(Snapshot *out, const MediaItem *item) {
+	snprintf(out->id, sizeof(out->id), "%s", item->id);
+	snprintf(out->title, sizeof(out->title), "%s", item->title);
+	snprintf(out->filename, sizeof(out->filename), "%s", item->filename);
+	snprintf(out->author, sizeof(out->author), "%s", item->author ? item->author : "");
+
+	out->item = (MediaItem){
+		.id = out->id,
+		.title = out->title,
+		.filename = out->filename,
+		.author = out->author[0] ? out->author : NULL,
+		.views = item->views,
+		.duration = item->duration,
+		.position = item->position,
+	};
+}
+
 void shelf_remember(const MediaItem *item) {
 	shelf_load();
+
+	/* Taken before anything moves; see Snapshot. */
+	Snapshot snap;
+	snapshot_take(&snap, item);
 
 	/* Watching something again moves it back to the front rather than adding a
 	 * second line for it, which is what makes the list read as places you have
 	 * been rather than a tally of how often. */
-	size_t at = find(SHELF_HISTORY, item->id);
+	size_t at = find(SHELF_HISTORY, snap.id);
 
 	/*
 	 * The entry being replaced is the only place the old position is kept, and the
@@ -283,7 +326,7 @@ void shelf_remember(const MediaItem *item) {
 
 	if (at != (size_t)-1) remove_at(SHELF_HISTORY, at);
 
-	if (push_front(SHELF_HISTORY, item)) {
+	if (push_front(SHELF_HISTORY, &snap.item)) {
 		shelves[SHELF_HISTORY].list.items[0].position = keep;
 		save_one(SHELF_HISTORY);
 	}
@@ -313,12 +356,15 @@ bool shelf_is_favourite(const char *id) {
 void shelf_remember_saved(const MediaItem *item) {
 	shelf_load();
 
+	Snapshot snap;
+	snapshot_take(&snap, item);
+
 	/* Saving the same video twice overwrites one file on the card, so it must leave
 	 * one row here too -- and the newest attempt is the one whose title is right. */
-	size_t at = find(SHELF_SAVED, item->id);
+	size_t at = find(SHELF_SAVED, snap.id);
 	if (at != (size_t)-1) remove_at(SHELF_SAVED, at);
 
-	if (push_front(SHELF_SAVED, item)) save_one(SHELF_SAVED);
+	if (push_front(SHELF_SAVED, &snap.item)) save_one(SHELF_SAVED);
 }
 
 int shelf_position(const char *id) {

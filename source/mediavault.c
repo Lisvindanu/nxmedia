@@ -352,34 +352,73 @@ static bool wait_until_ready(const Settings *cfg, const MediaItem *item,
  * never answers has to stop being waited for. */
 #define WARM_TIMEOUT_SECONDS 60
 
-bool media_prepare_stream(const Settings *cfg, const MediaItem *item,
-		char *url_out, size_t url_len, char *err, size_t err_len) {
-	char url[640];
-	snprintf(url, sizeof(url), "%s/proxy/%s", cfg->mediavault_url, item->id);
-
+/*
+ * Warms one route and reports whether it answered.
+ *
+ * The server explains itself in the body, and its reason is worth far more than the
+ * status code: "members only" or "unavailable in your country" is something a person
+ * can act on, where "HTTP 500" is not.
+ */
+static bool warm_route(const char *url, char *err, size_t err_len) {
 	/* Printed before the wait, not after: when this is the last line in the log, the
 	 * warm-up is where it stopped, and the URL says which route was taken. */
 	printf("[media] memanaskan %s\n", url);
 
 	HttpBuffer reply = {0};
-	if (!http_touch(url, WARM_TIMEOUT_SECONDS, &reply, err, err_len)) {
-		/*
-		 * The server says why in its body, and its reason is worth far more than the
-		 * status code: "members only" or "unavailable in your country" is something a
-		 * person can act on, where "HTTP 500" is not.
-		 */
-		json_object *root = json_tokener_parse(reply.data ? reply.data : "");
-		if (root) {
-			const char *reason = string_field(root, "error");
-			if (!reason) reason = string_field(root, "message");
-			if (reason) set_err(err, err_len, "%.200s", reason);
-			json_object_put(root);
+	if (http_touch(url, WARM_TIMEOUT_SECONDS, &reply, err, err_len)) {
+		http_buffer_free(&reply);
+		return true;
+	}
+
+	json_object *root = json_tokener_parse(reply.data ? reply.data : "");
+	if (root) {
+		const char *reason = string_field(root, "error");
+		if (!reason) reason = string_field(root, "message");
+		if (reason) set_err(err, err_len, "%.200s", reason);
+		json_object_put(root);
+	}
+
+	http_buffer_free(&reply);
+	printf("[media] pemanasan gagal: %s\n", err);
+	return false;
+}
+
+bool media_prepare_stream(const Settings *cfg, const MediaItem *item,
+		char *url_out, size_t url_len, char *err, size_t err_len) {
+	char url[640];
+
+	/*
+	 * The manifest route, when it is asked for.
+	 *
+	 * It should be the better one: 720p without any merging, and a first byte in
+	 * well under a second measured from a desktop. On the console it did not finish
+	 * opening at all -- two minutes in, still connecting -- while the proxy opens in
+	 * one to three seconds there every time. Why is not yet understood, so it is off
+	 * by default and reachable from the settings file.
+	 *
+	 * There is no 720p to be had from the progressive route either way: itag 22, the
+	 * muxed format that would have needed no merging, has been withdrawn. Measured
+	 * across five videos and four client profiles it is absent everywhere, and even
+	 * itag 18 survives on only one of them.
+	 */
+	if (cfg->prefer_hls) {
+		snprintf(url, sizeof(url), "%s/hls/%s", cfg->mediavault_url, item->id);
+
+		if (warm_route(url, err, err_len)) {
+			snprintf(url_out, url_len, "%s", url);
+			return true;
 		}
 
-		http_buffer_free(&reply);
-		printf("[media] pemanasan gagal: %s\n", err);
-		return false;
+		printf("[media] hls gagal, jatuh ke proxy\n");
 	}
+
+	/*
+	 * 360p, with the sound already inside it, so the server has nothing to merge and
+	 * the wait does not grow with the video's length.
+	 */
+	snprintf(url, sizeof(url), "%s/proxy/%s", cfg->mediavault_url, item->id);
+
+	if (!warm_route(url, err, err_len)) return false;
 
 	snprintf(url_out, url_len, "%s", url);
 	return true;

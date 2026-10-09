@@ -138,6 +138,50 @@ int main(void) {
 
 	free_sample(&c);
 
+	printf("\n-- diputar dari dalam daftar riwayat sendiri --\n");
+	/*
+	 * The bug this guards is the one that filled the history with its own neighbours.
+	 * The YouTube pane hands shelf_remember a pointer into whichever list is on
+	 * screen; when that is the history, remove_at frees the slot and memmoves the
+	 * rest down before push_front reads the pointer, so the entry pushed to the
+	 * front was the wrong video entirely.
+	 */
+	shelf_exit();
+	system("rm -rf /tmp/nxmedia-shelf-test");
+	shelf_load();
+
+	MediaItem one = sample("id1", "Satu", 100);
+	MediaItem two = sample("id2", "Dua", 200);
+	MediaItem three = sample("id3", "Tiga", 300);
+	shelf_remember(&one);
+	shelf_remember(&two);
+	shelf_remember(&three);
+	free_sample(&one);
+	free_sample(&two);
+	free_sample(&three);
+
+	check("tiga tersimpan", shelf_list(SHELF_HISTORY)->count == 3);
+	check("urutan id3, id2, id1", strcmp(first_id(SHELF_HISTORY), "id3") == 0);
+
+	/* Exactly what the pane does: a pointer straight into the list being shown. */
+	const MediaItem *inside = &shelf_list(SHELF_HISTORY)->items[1];
+	shelf_remember(inside);
+
+	check("yang diputar naik ke depan", strcmp(first_id(SHELF_HISTORY), "id2") == 0);
+	check("tidak menggandakan", shelf_list(SHELF_HISTORY)->count == 3);
+
+	{
+		const MediaListing *h = shelf_list(SHELF_HISTORY);
+		bool seen[3] = { false, false, false };
+		for (size_t i = 0; i < h->count; i++) {
+			if (strcmp(h->items[i].id, "id1") == 0) seen[0] = true;
+			if (strcmp(h->items[i].id, "id2") == 0) seen[1] = true;
+			if (strcmp(h->items[i].id, "id3") == 0) seen[2] = true;
+		}
+		check("ketiganya masih ada, tanpa tetangga menyusup",
+				seen[0] && seen[1] && seen[2]);
+	}
+
 	free_sample(&a);
 	free_sample(&b);
 	shelf_exit();

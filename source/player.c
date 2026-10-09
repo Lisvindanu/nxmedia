@@ -257,6 +257,16 @@ static bool open_media(const Request *request, Media *media) {
 	 * and on this console each one costs real time.
 	 */
 	av_dict_set(&opts, "multiple_requests", "1", 0);
+
+	/*
+	 * The HLS demuxer keeps its own connection pool, separate from the http
+	 * protocol's, so it needs telling separately. Without this it opens a fresh TCP
+	 * and TLS connection for every segment it fetches -- and a manifest stream is
+	 * nothing but a sequence of segment fetches, so on this console that handshake
+	 * is paid over and over before the first frame appears.
+	 */
+	av_dict_set(&opts, "http_persistent", "1", 0);
+
 	if (request->referer) av_dict_set(&opts, "referer", request->referer, 0);
 	if (request->user_agent) av_dict_set(&opts, "user_agent", request->user_agent, 0);
 
